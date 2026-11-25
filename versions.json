@@ -7,7 +7,7 @@
     "ldns": "1.9.2"
   },
   "last_build_date": "2026-11-25",
-  "last_digest": "",
+  "last_digest": "dgcosenza/unbound@sha256:7e7186b9907298a8646775de478910730112ea5affc252ed39eeac45f99624b2",
   "unfixed_high_critical": [
     "CVE-2025-69720",
     "CVE-2026-107494",

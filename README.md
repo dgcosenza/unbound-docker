@@ -29,6 +29,7 @@ EDNS client subnet, cachedb, nghttp2, TCP Fast Open).
 | `ldns` | `1.9.2` |
 | Last verified build | `2026-11-25` |
 | Fixable CRITICAL / HIGH CVEs | `0` (Trivy + Grype gate) |
+| Published digest | `dgcosenza/unbound@sha256:7e7186b9907298a8646775de478910730112ea5affc252ed39eeac45f99624b2` |
 
 Currently tracked unfixed upstream findings (no fix released): `CVE-2025-69720`, `CVE-2026-107494`, `CVE-2026-113351`, `CVE-2026-115506`, `CVE-2026-117610`, `CVE-2026-118370`, `CVE-2026-119373`, `CVE-2026-119374`, `CVE-2026-119379`, `CVE-2026-124709`.
 

@@ -12,7 +12,7 @@ the upstream NLnet Labs Unbound release version.
 
 - Rebuilt on Debian `13.8` (`debian:trixie-slim`) with unbound `1.26.2`, ldns `1.9.2`.
 - Verified `0` fixable CRITICAL/HIGH vulnerabilities in Trivy and Grype.
-
+- Published digest: `dgcosenza/unbound@sha256:7e7186b9907298a8646775de478910730112ea5affc252ed39eeac45f99624b2`.
 ## [1.26.2] - 2026-11-24
 
 ### Added
