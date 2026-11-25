@@ -157,6 +157,7 @@ ARG IMAGE_CREATED
 ARG IMAGE_REVISION
 ARG IMAGE_SOURCE
 
+# hadolint ignore=DL3067
 COPY --from=os-base / /
 COPY --from=builder /opt/usr/sbin/ /usr/sbin/
 COPY --from=builder /opt/usr/bin/ /usr/bin/
