@@ -1,12 +1,30 @@
 {
   "image": "dgcosenza/unbound",
   "upstream_version": "1.26.2",
-  "debian_version": "13",
+  "debian_version": "13.8",
   "components": {
     "unbound": "1.26.2",
     "ldns": "1.9.2"
   },
-  "last_build_date": "2026-11-24",
+  "last_build_date": "2026-11-25",
   "last_digest": "",
-  "unfixed_high_critical": []
+  "unfixed_high_critical": [
+    "CVE-2025-69720",
+    "CVE-2026-107494",
+    "CVE-2026-113351",
+    "CVE-2026-115506",
+    "CVE-2026-117610",
+    "CVE-2026-118370",
+    "CVE-2026-119373",
+    "CVE-2026-119374",
+    "CVE-2026-119379",
+    "CVE-2026-124709",
+    "CVE-2026-16742",
+    "CVE-2026-54369",
+    "CVE-2026-76642",
+    "CVE-2026-78408",
+    "CVE-2026-78409",
+    "CVE-2026-78410",
+    "CVE-2026-9538"
+  ]
 }
