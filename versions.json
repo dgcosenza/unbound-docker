@@ -1,0 +1,12 @@
+{
+  "image": "dgcosenza/unbound",
+  "upstream_version": "1.26.2",
+  "debian_version": "13",
+  "components": {
+    "unbound": "1.26.2",
+    "ldns": "1.9.2"
+  },
+  "last_build_date": "2026-11-24",
+  "last_digest": "",
+  "unfixed_high_critical": []
+}

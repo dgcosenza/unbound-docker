@@ -1,0 +1,11 @@
+.git
+.github
+.gitignore
+README.md
+CHANGELOG.md
+SECURITY.md
+THIRD-PARTY-NOTICES.md
+DOCKERHUB_SHORT_DESCRIPTION
+docker-compose.example.yml
+tests
+versions.json

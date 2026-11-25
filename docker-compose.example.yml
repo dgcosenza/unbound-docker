@@ -1,0 +1,42 @@
+# Production-style compose example for dgcosenza/unbound
+#
+# Pin production deployments by @sha256 digest. This example runs Unbound on a
+# private bridge network as an upstream recursive/DNSSEC resolver for Pi-hole
+# or other internal clients.
+
+services:
+  unbound:
+    image: dgcosenza/unbound:latest
+    container_name: unbound
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      # Option A: drop-in override files alongside defaults
+      - ./custom.conf.d:/etc/unbound/custom.conf.d:ro
+      # Option B: mount a complete custom configuration read-only
+      # - ./unbound.conf:/etc/unbound/unbound.conf:ro
+    healthcheck:
+      test: ["CMD", "drill", "-Q", "@127.0.0.1", "nlnetlabs.nl"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 256M
+        reservations:
+          cpus: "0.10"
+          memory: 64M
+    networks:
+      dns_internal:
+        ipv4_address: 172.20.0.10
+
+networks:
+  dns_internal:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1

@@ -1,0 +1,489 @@
+name: Daily build, scan and publish
+
+on:
+  schedule:
+    # Daily rebuild at 05:20 UTC to pick up Debian 13 security updates,
+    # root hints/anchor updates, and new NLnet Labs Unbound/ldns releases.
+    - cron: '20 5 * * *'
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      unbound_version:
+        description: 'Override NLnet Labs Unbound version (e.g. 1.26.2; empty for latest)'
+        required: false
+        default: ''
+      ldns_version:
+        description: 'Override NLnet Labs ldns version (e.g. 1.9.2; empty for latest)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: dgcosenza/unbound
+  UNBOUND_VERSION_DEFAULT: '1.26.2'
+  LDNS_VERSION_DEFAULT: '1.9.2'
+
+jobs:
+  public-check:
+    name: Public content and attribution check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Verify public content and maintainer attribution
+        env:
+          PR_TEXT: ${{ github.event.pull_request.title }} ${{ github.event.pull_request.body }}
+        run: .github/scripts/public-check.sh
+
+  build-scan-publish:
+    name: Build, scan, smoke test and publish
+    needs: [public-check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      upstream_version: ${{ steps.upstream.outputs.unbound_version }}
+      build_date: ${{ steps.upstream.outputs.build_date }}
+      published_digest: ${{ steps.push.outputs.digest }}
+      can_publish: ${{ steps.hub_auth.outputs.can_publish }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Step 1 - Resolve upstream versions and release notes
+        id: upstream
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          api() {
+            curl -fsSL \
+              -H 'Accept: application/vnd.github+json' \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "$@"
+          }
+
+          UNBOUND_REL_JSON="$(api https://api.github.com/repos/NLnetLabs/unbound/releases/latest)"
+          UNBOUND_VER="${{ inputs.unbound_version }}"
+          if [ -z "$UNBOUND_VER" ]; then
+            UNBOUND_VER="$(printf '%s' "$UNBOUND_REL_JSON" | jq -r '.tag_name // empty' | sed 's/^release-//')"
+          fi
+          test -n "$UNBOUND_VER" || UNBOUND_VER="${UNBOUND_VERSION_DEFAULT}"
+
+          UNBOUND_SHA256="$(curl -fsSL --retry 3 "https://nlnetlabs.nl/downloads/unbound/unbound-${UNBOUND_VER}.tar.gz.sha256" | awk '{print $1}')"
+          test "${#UNBOUND_SHA256}" -eq 64
+
+          LDNS_VER="${{ inputs.ldns_version }}"
+          if [ -z "$LDNS_VER" ]; then
+            LDNS_VER="$(curl -fsSL --retry 3 https://nlnetlabs.nl/downloads/ldns/ \
+              | grep -oE 'ldns-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' \
+              | sed -E 's/^ldns-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz$/\1/' \
+              | sort -Vu | tail -n 1)"
+          fi
+          test -n "$LDNS_VER" || LDNS_VER="${LDNS_VERSION_DEFAULT}"
+
+          LDNS_SHA256="$(curl -fsSL --retry 3 "https://nlnetlabs.nl/downloads/ldns/ldns-${LDNS_VER}.tar.gz.sha256" | awk '{print $1}')"
+          test "${#LDNS_SHA256}" -eq 64
+
+          : > upstream-changes.md
+          OLD_UNBOUND="$(jq -r '.components.unbound // ""' versions.json 2>/dev/null || true)"
+          if [ "$UNBOUND_VER" != "$OLD_UNBOUND" ]; then
+            echo "## Unbound ${UNBOUND_VER}" >> upstream-changes.md
+            printf '%s\n\n' "$(printf '%s' "$UNBOUND_REL_JSON" | jq -r '.body // ""')" >> upstream-changes.md
+          fi
+
+          BUILD_DATE="$(date -u +%Y%m%d)"
+          BUILD_ISO_DATE="$(date -u +%Y-%m-%d)"
+          CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          {
+            echo "unbound_version=${UNBOUND_VER}"
+            echo "unbound_sha256=${UNBOUND_SHA256}"
+            echo "ldns_version=${LDNS_VER}"
+            echo "ldns_sha256=${LDNS_SHA256}"
+            echo "build_date=${BUILD_DATE}"
+            echo "build_iso_date=${BUILD_ISO_DATE}"
+            echo "created=${CREATED}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Resolved upstream versions"
+            echo ""
+            echo "| Component | Version | SHA-256 |"
+            echo "|---|---|---|"
+            echo "| Unbound | ${UNBOUND_VER} | \`${UNBOUND_SHA256}\` |"
+            echo "| ldns | ${LDNS_VER} | \`${LDNS_SHA256}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload upstream-changes artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: upstream-changes
+          path: upstream-changes.md
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Step 2 - Build linux/amd64 image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          no-cache: ${{ github.event_name == 'schedule' }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:ci-candidate
+          build-args: |
+            UNBOUND_VERSION=${{ steps.upstream.outputs.unbound_version }}
+            UNBOUND_SHA256=${{ steps.upstream.outputs.unbound_sha256 }}
+            LDNS_VERSION=${{ steps.upstream.outputs.ldns_version }}
+            LDNS_SHA256=${{ steps.upstream.outputs.ldns_sha256 }}
+            IMAGE_CREATED=${{ steps.upstream.outputs.created }}
+            IMAGE_REVISION=${{ github.sha }}
+            IMAGE_SOURCE=https://github.com/${{ github.repository }}
+
+      - name: Record exact Debian release inside built image
+        id: os_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEBIAN_VER="$(docker run --rm --entrypoint cat "${IMAGE_NAME}:ci-candidate" /etc/debian_version | tr -d '\r\n')"
+          echo "debian_version=${DEBIAN_VER}" >> "$GITHUB_OUTPUT"
+          echo "Built image Debian version: ${DEBIAN_VER}"
+
+      - name: Step 3a - Trivy full report (table, informational)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+          exit-code: '0'
+          output: 'trivy-report.txt'
+
+      - name: Step 3b - Trivy JSON report (for CVE diffing)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate'
+          format: 'json'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+          exit-code: '0'
+          output: 'trivy-report.json'
+
+      - name: Step 3c - Trivy SARIF report for GitHub code scanning
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate'
+          format: 'sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+          ignore-unfixed: true
+          exit-code: '0'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy SARIF to code scanning
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: trivy-unbound
+
+      - name: Upload Trivy report artifacts (90 days)
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-report
+          path: |
+            trivy-report.txt
+            trivy-report.json
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Step 3d - Trivy HARD GATE (0 fixable CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Step 3e - Grype HARD GATE (0 fixable CRITICAL/HIGH)
+        id: grype
+        uses: anchore/scan-action@v7
+        with:
+          image: '${{ env.IMAGE_NAME }}:ci-candidate'
+          only-fixed: true
+          severity-cutoff: high
+          fail-build: true
+          output-format: table
+          output-file: grype-report.txt
+
+      - name: Upload Grype report artifact (90 days)
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: grype-report
+          path: grype-report.txt
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Generate SPDX SBOM with Syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: '${{ env.IMAGE_NAME }}:ci-candidate'
+          format: 'spdx-json'
+          output-file: 'sbom.spdx.json'
+          upload-artifact: false
+
+      - name: Upload SBOM artifact (90 days)
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-spdx-json
+          path: sbom.spdx.json
+          retention-days: 90
+
+      - name: Step 4 - Smoke test (DNS, DNSSEC, non-root drop, negative tests)
+        shell: bash
+        run: ./tests/smoke.sh "${IMAGE_NAME}:ci-candidate"
+
+      - name: Check Docker Hub publish credentials
+        id: hub_auth
+        shell: bash
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ] && [ -n "$DH_USER" ] && [ -n "$DH_TOKEN" ]; then
+            echo "can_publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "can_publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Docker Hub push (PR event or DOCKERHUB_USERNAME/DOCKERHUB_TOKEN not configured)."
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.hub_auth.outputs.can_publish == 'true'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Step 5 - Tag and push verified image to Docker Hub
+        if: steps.hub_auth.outputs.can_publish == 'true'
+        id: push
+        shell: bash
+        env:
+          VERSION: ${{ steps.upstream.outputs.unbound_version }}
+          BUILD_DATE: ${{ steps.upstream.outputs.build_date }}
+        run: |
+          set -euo pipefail
+          for tag in \
+            "${IMAGE_NAME}:${VERSION}-${BUILD_DATE}" \
+            "${IMAGE_NAME}:${VERSION}" \
+            "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}:sha-${GITHUB_SHA::7}"; do
+            docker tag "${IMAGE_NAME}:ci-candidate" "$tag"
+            docker push "$tag"
+          done
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE_NAME}:latest")"
+          echo "Published digest: ${DIGEST}"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release metadata and CVE diff for docs auto-update
+        shell: bash
+        env:
+          UNBOUND_VER: ${{ steps.upstream.outputs.unbound_version }}
+          LDNS_VER: ${{ steps.upstream.outputs.ldns_version }}
+          DEBIAN_VER: ${{ steps.os_meta.outputs.debian_version }}
+          BUILD_ISO_DATE: ${{ steps.upstream.outputs.build_iso_date }}
+          PUBLISHED_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+
+          old = json.load(open("versions.json")) if os.path.exists("versions.json") else {}
+          prev_unfixed = set(old.get("unfixed_high_critical") or [])
+
+          cur_unfixed = set()
+          if os.path.exists("trivy-report.json"):
+              tr = json.load(open("trivy-report.json"))
+              for res in tr.get("Results") or []:
+                  for v in res.get("Vulnerabilities") or []:
+                      if v.get("Severity") in ("CRITICAL", "HIGH") and not v.get("FixedVersion"):
+                          cur_unfixed.add(v["VulnerabilityID"])
+
+          fixed_cves = sorted(prev_unfixed - cur_unfixed)
+          json.dump({"fixed_cves": fixed_cves}, open("cve-diff.json", "w"), indent=2)
+
+          new_versions = {
+              "image": os.environ["IMAGE_NAME"],
+              "upstream_version": os.environ["UNBOUND_VER"],
+              "debian_version": os.environ["DEBIAN_VER"],
+              "components": {
+                  "unbound": os.environ["UNBOUND_VER"],
+                  "ldns": os.environ["LDNS_VER"],
+              },
+              "last_build_date": os.environ["BUILD_ISO_DATE"],
+              "last_digest": os.environ.get("PUBLISHED_DIGEST", ""),
+              "unfixed_high_critical": sorted(cur_unfixed),
+          }
+          json.dump(new_versions, open("versions.new.json", "w"), indent=2)
+          PY
+
+      - name: Upload release metadata artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-meta
+          path: |
+            versions.new.json
+            upstream-changes.md
+            cve-diff.json
+          retention-days: 7
+
+  update-docs:
+    name: Step 6 - Auto-update docs and sync Docker Hub overview
+    needs: [public-check, build-scan-publish]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Download release metadata
+        uses: actions/download-artifact@v5
+        with:
+          name: release-meta
+          path: .ci-meta
+
+      - name: Update versions.json, README.md, and CHANGELOG.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/update-docs.py \
+            .ci-meta/versions.new.json \
+            .ci-meta/upstream-changes.md \
+            .ci-meta/cve-diff.json
+          rm -rf .ci-meta
+
+      - name: Verify public content check before bot commit
+        run: .github/scripts/public-check.sh
+
+      - name: Commit and push documentation updates if changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- versions.json README.md CHANGELOG.md; then
+            echo "No tracked documentation changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add versions.json README.md CHANGELOG.md
+          git commit -m "chore(deps): daily version and changelog update [skip ci]"
+          git push origin main
+
+      - name: Check Docker Hub credentials for overview sync
+        id: hub_sync
+        shell: bash
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$DH_USER" ] && [ -n "$DH_TOKEN" ]; then
+            DESC="$(tr -d '\r\n' < DOCKERHUB_SHORT_DESCRIPTION)"
+            if [ "${#DESC}" -gt 100 ]; then
+              echo "ERROR: DOCKERHUB_SHORT_DESCRIPTION exceeds 100 characters (${#DESC})." >&2
+              exit 1
+            fi
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "short_desc=${DESC}" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync Docker Hub repository overview (short & full description)
+        if: steps.hub_sync.outputs.enabled == 'true'
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.IMAGE_NAME }}
+          short-description: ${{ steps.hub_sync.outputs.short_desc }}
+          readme-filepath: ./README.md
+
+  alert:
+    name: Step 7 - Open/update or close ci-failure issue
+    needs: [public-check, build-scan-publish, update-docs]
+    if: always() && (github.event_name == 'schedule' || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Reconcile ci-failure issue state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RES_PUBLIC: ${{ needs.public-check.result }}
+          RES_BUILD: ${{ needs.build-scan-publish.result }}
+          RES_DOCS: ${{ needs.update-docs.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          FAILED_STEP=""
+          for pair in "public-check:${RES_PUBLIC}" "build-scan-publish:${RES_BUILD}" "update-docs:${RES_DOCS}"; do
+            job="${pair%%:*}"
+            res="${pair##*:}"
+            if [ "$res" = "failure" ]; then
+              FAILED_STEP="$job"
+              break
+            fi
+          done
+
+          gh label create ci-failure --repo "$GITHUB_REPOSITORY" --color B60205 \
+            --description "Automated daily build or security scan failure" 2>/dev/null || true
+
+          EXISTING="$(gh issue list --repo "$GITHUB_REPOSITORY" --label ci-failure --state open --json number --jq '.[0].number // empty')"
+
+          if [ -n "$FAILED_STEP" ]; then
+            TITLE="Daily build failed: ${FAILED_STEP}"
+            BODY="$(printf 'The daily pipeline failed on **%s**.\n\n- Workflow run: %s\n- Event: `%s`\n- Commit: `%s`\n- Job results: `public-check=%s`, `build-scan-publish=%s`, `update-docs=%s`\n' \
+              "$FAILED_STEP" "$RUN_URL" "${{ github.event_name }}" "${{ github.sha }}" "$RES_PUBLIC" "$RES_BUILD" "$RES_DOCS")"
+            if [ -n "$EXISTING" ]; then
+              gh issue edit "$EXISTING" --repo "$GITHUB_REPOSITORY" --title "$TITLE"
+              gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --label ci-failure --title "$TITLE" --body "$BODY"
+            fi
+          elif [ "$RES_PUBLIC" = "success" ] && [ "$RES_BUILD" = "success" ] && { [ "$RES_DOCS" = "success" ] || [ "$RES_DOCS" = "skipped" ]; }; then
+            if [ -n "$EXISTING" ]; then
+              gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" \
+                --body "Resolved: pipeline is green again in ${RUN_URL} (commit \`${{ github.sha }}\`). Closing automatically."
+              gh issue close "$EXISTING" --repo "$GITHUB_REPOSITORY" --reason completed
+            fi
+          fi

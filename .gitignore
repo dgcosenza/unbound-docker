@@ -1,0 +1,11 @@
+trivy-report.txt
+trivy-report.json
+trivy-results.sarif
+grype-report.txt
+sbom.spdx.json
+upstream-changes.md
+versions.new.json
+cve-diff.json
+.ci-meta/
+*.log
+.DS_Store
