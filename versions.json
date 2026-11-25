@@ -1,14 +1,34 @@
 {
   "image": "dgcosenza/unbound",
+  "upstream_name": "NLnetLabs/unbound",
+  "upstream_license": "BSD-3-Clause",
+  "packaging_license": "MIT",
   "upstream_version": "1.26.2",
-  "debian_version": "13.8",
-  "components": {
-    "unbound": "1.26.2",
-    "ldns": "1.9.2"
+  "changelog_version": "1.26.2",
+  "architectures": [
+    "linux/amd64",
+    "linux/arm64"
+  ],
+  "sizes_mb": {
+    "amd64": "35.4",
+    "arm64": "110.5"
   },
-  "last_build_date": "2026-11-25",
-  "last_digest": "dgcosenza/unbound@sha256:7e7186b9907298a8646775de478910730112ea5affc252ed39eeac45f99624b2",
-  "unfixed_high_critical": [
+  "signed": true,
+  "slsa_provenance": true,
+  "components": {
+    "Unbound": "1.26.2",
+    "ldns": "1.9.2",
+    "Base OS": "Debian 13.8 (trixie-slim)"
+  },
+  "base_image": "debian:trixie-slim",
+  "base_digest": "sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0",
+  "debian_version": "13.8",
+  "build_date": "2026-11-25",
+  "built_at_utc": "2026-11-25T08:10:03Z",
+  "image_digest": "dgcosenza/unbound@sha256:025472a20f1551412fe8a00187682e8cdc1182838c1cf1c8bded26b25df2975b",
+  "ghcr_digest": "ghcr.io/dgcosenza/unbound@sha256:025472a20f1551412fe8a00187682e8cdc1182838c1cf1c8bded26b25df2975b",
+  "fixable_critical_high": 0,
+  "unfixed_cves": [
     "CVE-2025-69720",
     "CVE-2026-107494",
     "CVE-2026-113351",
