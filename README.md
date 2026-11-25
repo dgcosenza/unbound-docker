@@ -39,10 +39,10 @@ A source-built, multi-arch, continuously rebuilt **Debian 13 (`trixie-slim`)** c
 | ldns | `1.9.2` |
 | Base OS | `Debian 13.8 (trixie-slim)` |
 | Architectures | `linux/amd64, linux/arm64` |
-| Uncompressed size (per arch) | `amd64: 35.4 MB, arm64: 110.5 MB` |
+| Compressed size (per arch) | `amd64: 35.4 MB, arm64: 35.7 MB` |
 | Last verified build (UTC) | `2026-11-25` |
-| Published multi-arch digest | `dgcosenza/unbound@sha256:025472a20f1551412fe8a00187682e8cdc1182838c1cf1c8bded26b25df2975b` |
-| GHCR mirror | `ghcr.io/dgcosenza/unbound@sha256:025472a20f1551412fe8a00187682e8cdc1182838c1cf1c8bded26b25df2975b` |
+| Published multi-arch digest | `dgcosenza/unbound@sha256:15311fdf6047da9043b3ad90d39aa91001d6d2943fca276e2febd0442481a3ab` |
+| GHCR mirror | `ghcr.io/dgcosenza/unbound@sha256:15311fdf6047da9043b3ad90d39aa91001d6d2943fca276e2febd0442481a3ab` |
 | Supply chain | Cosign OIDC signed + SPDX & CycloneDX SBOM attestations + SLSA Build L3 provenance |
 | Security gate (Trivy + Grype on SBOM) | **0 fixable Critical/High** (17 upstream-unfixed) |
 
