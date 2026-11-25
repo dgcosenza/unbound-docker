@@ -773,7 +773,8 @@ jobs:
           rm -rf .ci-meta
           .github/scripts/public-check.sh
 
-      - name: Commit and push updated documentation (if changed)
+      - name: Commit docs and push temp branch
+        id: docs_commit
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -789,19 +790,106 @@ jobs:
             git branch "$TMPBRANCH"
             git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
             git push origin "$TMPBRANCH"
-            for ctx in "Public content check" "Hadolint Dockerfile lint" "Gitleaks secret scan"; do
-              gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs" \
-                -f name="$ctx" -f head_sha="$SHA" -f status=completed -f conclusion=success >/dev/null
-            done
-            for _attempt in 1 2 3; do
-              git push origin "$TMPBRANCH:main" && break
-              echo "push attempt $_attempt failed; retrying..." >&2
-              sleep 5
-            done
-            git push origin --delete "$TMPBRANCH" || true
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+            echo "tmpbranch=${TMPBRANCH}" >> "$GITHUB_OUTPUT"
           else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No documentation or version metadata changes to commit."
           fi
+
+      - name: Install Gitleaks
+        if: steps.docs_commit.outputs.changed == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="8.30.1"
+          SHA="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+          curl -fsSLo /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+          echo "${SHA}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          rm -f /tmp/gitleaks /tmp/gitleaks.tar.gz
+
+      - name: Run required public content check
+        id: public_check
+        if: always() && steps.docs_commit.outputs.changed == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          PR_TEXT: ""
+        run: |
+          set -euo pipefail
+          .github/scripts/public-check.sh 2>&1 | tee /tmp/public-check.txt
+
+      - name: Run required Hadolint lint
+        id: hadolint_check
+        if: always() && steps.docs_commit.outputs.changed == 'true'
+        continue-on-error: true
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: warning
+
+      - name: Run required Gitleaks scan
+        id: gitleaks_check
+        if: always() && steps.docs_commit.outputs.changed == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          gitleaks git --verbose --redact --no-banner 2>&1 | tee /tmp/gitleaks-check.txt
+
+      - name: Report required checks and push docs to main
+        if: always() && steps.docs_commit.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.docs_commit.outputs.sha }}
+          TMPBRANCH: ${{ steps.docs_commit.outputs.tmpbranch }}
+          PUBLIC_OUTCOME: ${{ steps.public_check.outcome }}
+          HADOLINT_OUTCOME: ${{ steps.hadolint_check.outcome }}
+          GITLEAKS_OUTCOME: ${{ steps.gitleaks_check.outcome }}
+        run: |
+          set -euo pipefail
+          post_check() {
+            local ctx="$1" outcome="$2" file="$3"
+            local conclusion="success"
+            [ "$outcome" = "success" ] || conclusion="failure"
+            local summary="Outcome: ${outcome}"
+            local text="See the workflow run logs for full details."
+            if [ -f "$file" ] && [ -s "$file" ]; then
+              text="$(tail -c 60000 "$file" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g' | awk '{printf "%s\\n", $0}')"
+            fi
+            jq -n \
+              --arg name "$ctx" \
+              --arg head_sha "$SHA" \
+              --arg conclusion "$conclusion" \
+              --arg summary "$summary" \
+              --arg text "$text" \
+              '{name:$name, head_sha:$head_sha, status:"completed", conclusion:$conclusion, output:{title:$name, summary:$summary, text:$text}}' \
+              > /tmp/check-run.json
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs" --input /tmp/check-run.json >/dev/null
+          }
+
+          post_check "Public content check" "$PUBLIC_OUTCOME" /tmp/public-check.txt
+          post_check "Hadolint Dockerfile lint" "$HADOLINT_OUTCOME" hadolint-check.txt
+          post_check "Gitleaks secret scan" "$GITLEAKS_OUTCOME" /tmp/gitleaks-check.txt
+
+          if [ "$PUBLIC_OUTCOME" != "success" ] || [ "$HADOLINT_OUTCOME" != "success" ] || [ "$GITLEAKS_OUTCOME" != "success" ]; then
+            echo "One or more required checks failed; not pushing docs to main." >&2
+            git push origin --delete "$TMPBRANCH" || true
+            exit 1
+          fi
+
+          for _attempt in 1 2 3; do
+            git push origin "${TMPBRANCH}:main" && break
+            echo "push attempt ${_attempt} failed; retrying..." >&2
+            sleep 5
+          done
+          git push origin --delete "$TMPBRANCH" || true
 
       - name: Check Docker Hub sync credentials
         id: hub_sync
