@@ -1,17 +1,17 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.7
 
 # ---------------------------------------------------------------------------
-# NLnet Labs Unbound DNS resolver + ldns (drill) on Debian 13 (trixie) slim.
+# NLnet Labs Unbound DNS resolver + ldns (drill) on Debian 13 (trixie-slim).
 #
 # Drop-in compatible with klutchell/unbound: same /etc/unbound/unbound.conf,
 # /etc/unbound/custom.conf.d/*.conf, /var/unbound/root.key, unbound user
 # (101:102), drill healthcheck binary, and compiled-in feature flags.
 #
-# Every version below is a documented default; CI overrides them with the
-# latest upstream releases on each run (see .github/workflows/daily.yml).
+# Every version and base digest below is a documented default; CI overrides
+# them on each run (see .github/workflows/daily.yml).
 # ---------------------------------------------------------------------------
 
-ARG DEBIAN_VERSION=trixie-slim
+ARG DEBIAN_BASE=debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0
 
 ARG UNBOUND_VERSION=1.26.2
 ARG UNBOUND_SHA256=d8ee7aa6bbb3ff1be7d9e57637d0d0ec2f18273a8efff1a0afe2c665858b96f7
@@ -27,7 +27,9 @@ ARG IMAGE_REVISION=""
 ARG IMAGE_SOURCE="https://github.com/dgcosenza/unbound-docker"
 
 # ---- Stage 1: compile ldns (drill) and Unbound from verified source --------
-FROM debian:${DEBIAN_VERSION} AS builder
+FROM ${DEBIAN_BASE} AS builder
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG UNBOUND_VERSION
 ARG UNBOUND_SHA256
@@ -55,7 +57,7 @@ RUN apt-get update \
 WORKDIR /src/ldns
 RUN set -eux; \
     curl -fsSL --retry 3 "https://nlnetlabs.nl/downloads/ldns/ldns-${LDNS_VERSION}.tar.gz" -o ldns.tar.gz; \
-    echo "${LDNS_SHA256}  ldns.tar.gz" | sha256sum -c -; \
+    printf '%s  ldns.tar.gz\n' "${LDNS_SHA256}" | sha256sum -c -; \
     tar -xzf ldns.tar.gz --strip-components=1; \
     ./configure \
         --prefix=/opt/usr \
@@ -76,7 +78,7 @@ RUN set -eux; \
 WORKDIR /src/unbound
 RUN set -eux; \
     curl -fsSL --retry 3 "https://nlnetlabs.nl/downloads/unbound/unbound-${UNBOUND_VERSION}.tar.gz" -o unbound.tar.gz; \
-    echo "${UNBOUND_SHA256}  unbound.tar.gz" | sha256sum -c -; \
+    printf '%s  unbound.tar.gz\n' "${UNBOUND_SHA256}" | sha256sum -c -; \
     tar -xzf unbound.tar.gz --strip-components=1; \
     ./configure \
         --prefix=/opt/usr \
@@ -109,41 +111,18 @@ RUN set -eux; \
         /opt/usr/sbin/unbound-host; \
     install -Dm644 LICENSE /opt/notices/LICENSE-unbound
 
-# Fetch IANA root hints and bootstrap the RFC 5011 DNSSEC root trust anchor.
-# unbound-anchor exits 1 when it creates/updates root.key using the builtin
-# certificate, so verify its explicit success line.
+# Fetch IANA root hints and bootstrap RFC 5011 DNSSEC root trust anchor
 WORKDIR /var/unbound
 RUN set -eux; \
     curl -fsSL --retry 3 https://www.internic.net/domain/named.root -o /var/unbound/root.hints; \
     { /opt/usr/sbin/unbound-anchor -v -r /var/unbound/root.hints -a /var/unbound/root.key || true; } \
         | tee /dev/stderr | grep -q "success: the anchor is ok"
 
-# ---- Stage 2: hardened Debian 13 runtime -----------------------------------
-FROM debian:${DEBIAN_VERSION}
+# ---- Stage 2: fully upgraded Debian 13 runtime OS layer --------------------
+FROM ${DEBIAN_BASE} AS os-base
 
-ARG DEBIAN_VERSION
-ARG UNBOUND_VERSION
-ARG LDNS_VERSION
 ARG UNBOUND_UID
 ARG UNBOUND_GID
-ARG IMAGE_CREATED
-ARG IMAGE_REVISION
-ARG IMAGE_SOURCE
-
-LABEL org.opencontainers.image.title="NLnet Labs Unbound (Debian 13)" \
-      org.opencontainers.image.description="Hardened, up-to-date Debian 13 (trixie) build of NLnet Labs Unbound DNS resolver with DNSSEC and drill, drop-in compatible with klutchell/unbound." \
-      org.opencontainers.image.url="https://hub.docker.com/r/dgcosenza/unbound" \
-      org.opencontainers.image.source="${IMAGE_SOURCE}" \
-      org.opencontainers.image.documentation="${IMAGE_SOURCE}#readme" \
-      org.opencontainers.image.version="${UNBOUND_VERSION}" \
-      org.opencontainers.image.revision="${IMAGE_REVISION}" \
-      org.opencontainers.image.created="${IMAGE_CREATED}" \
-      org.opencontainers.image.licenses="BSD-3-Clause" \
-      org.opencontainers.image.vendor="Daniel G. Cosenza from FNX Labs" \
-      org.opencontainers.image.authors="Daniel G. Cosenza from FNX Labs" \
-      io.github.dgcosenza.unbound.upstream_version="${UNBOUND_VERSION}" \
-      io.github.dgcosenza.unbound.ldns_version="${LDNS_VERSION}" \
-      io.github.dgcosenza.unbound.base="debian:${DEBIAN_VERSION}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -161,23 +140,50 @@ RUN apt-get update \
         tini \
         tzdata \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Unprivileged service account matching klutchell/unbound defaults (101:102).
-RUN groupadd --system --gid "${UNBOUND_GID}" unbound \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && groupadd --system --gid "${UNBOUND_GID}" unbound \
     && useradd --system --uid "${UNBOUND_UID}" --gid unbound \
         --home-dir /var/unbound --no-create-home --shell /usr/sbin/nologin unbound \
     && install -d -o unbound -g unbound -m 0755 /var/unbound /etc/unbound /etc/unbound/custom.conf.d
 
+# ---- Stage 3: clean multi-arch runtime image (zero base-upgrade waste) -----
+FROM scratch
+
+ARG UNBOUND_VERSION
+ARG LDNS_VERSION
+ARG UNBOUND_UID
+ARG UNBOUND_GID
+ARG IMAGE_CREATED
+ARG IMAGE_REVISION
+ARG IMAGE_SOURCE
+
+COPY --from=os-base / /
 COPY --from=builder /opt/usr/sbin/ /usr/sbin/
 COPY --from=builder /opt/usr/bin/ /usr/bin/
 COPY --from=builder /opt/notices/ /usr/share/doc/unbound-notices/
-COPY --from=builder --chown=unbound:unbound /var/unbound/root.hints /var/unbound/root.hints
-COPY --from=builder --chown=unbound:unbound /var/unbound/root.key /var/unbound/root.key
-COPY --chown=unbound:unbound config/unbound.conf /etc/unbound/unbound.conf
+COPY --from=builder --chown=101:102 /var/unbound/root.hints /var/unbound/root.hints
+COPY --from=builder --chown=101:102 /var/unbound/root.key /var/unbound/root.key
+COPY --chown=101:102 config/unbound.conf /etc/unbound/unbound.conf
 
-# Build-time sanity checks: binaries link cleanly and default config is valid.
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    DEBIAN_FRONTEND=noninteractive
+
 RUN unbound -V && unbound-checkconf && drill -v
+
+LABEL org.opencontainers.image.title="NLnet Labs Unbound (Debian 13)" \
+      org.opencontainers.image.description="Hardened, multi-arch Debian 13 (trixie-slim) build of NLnet Labs Unbound DNS resolver with DNSSEC and drill, drop-in compatible with klutchell/unbound." \
+      org.opencontainers.image.url="https://hub.docker.com/r/dgcosenza/unbound" \
+      org.opencontainers.image.source="${IMAGE_SOURCE}" \
+      org.opencontainers.image.documentation="${IMAGE_SOURCE}#readme" \
+      org.opencontainers.image.version="${UNBOUND_VERSION}" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}" \
+      org.opencontainers.image.created="${IMAGE_CREATED}" \
+      org.opencontainers.image.licenses="BSD-3-Clause AND MIT" \
+      org.opencontainers.image.vendor="Daniel G. Cosenza from FNX Labs" \
+      org.opencontainers.image.authors="Daniel G. Cosenza from FNX Labs" \
+      org.opencontainers.image.base.name="debian:trixie-slim" \
+      io.github.dgcosenza.unbound.upstream_version="${UNBOUND_VERSION}" \
+      io.github.dgcosenza.unbound.ldns_version="${LDNS_VERSION}"
 
 EXPOSE 53/tcp 53/udp
 

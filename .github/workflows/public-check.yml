@@ -7,15 +7,20 @@ on:
     types: [opened, edited, synchronize, reopened]
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   public-check:
+    name: Public content check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
-      - name: Check tracked files, attribution, and pull request text
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check tracked files, LICENSE, attribution, license badges, and PR text
         env:
           PR_TEXT: ${{ github.event.pull_request.title }} ${{ github.event.pull_request.body }}
         run: .github/scripts/public-check.sh

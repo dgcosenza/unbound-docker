@@ -1,9 +1,7 @@
-name: Daily build, scan and publish
+name: Daily Unbound image
 
 on:
   schedule:
-    # Daily rebuild at 05:20 UTC to pick up Debian 13 security updates,
-    # root hints/anchor updates, and new NLnet Labs Unbound/ldns releases.
     - cron: '20 5 * * *'
   push:
     branches:
@@ -22,8 +20,7 @@ on:
         required: false
         default: ''
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,53 +33,100 @@ env:
 
 jobs:
   public-check:
-    name: Public content and attribution check
+    name: Public content check
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-      - name: Verify public content and maintainer attribution
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify public-content rules, LICENSE, attribution, and license badges
         env:
           PR_TEXT: ${{ github.event.pull_request.title }} ${{ github.event.pull_request.body }}
         run: .github/scripts/public-check.sh
 
-  build-scan-publish:
-    name: Build, scan, smoke test and publish
-    needs: [public-check]
+  hadolint:
+    name: Hadolint Dockerfile lint
     runs-on: ubuntu-latest
-    timeout-minutes: 90
     permissions:
       contents: read
-      security-events: write
-    outputs:
-      upstream_version: ${{ steps.upstream.outputs.unbound_version }}
-      build_date: ${{ steps.upstream.outputs.build_date }}
-      published_digest: ${{ steps.push.outputs.digest }}
-      can_publish: ${{ steps.hub_auth.outputs.can_publish }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Lint Dockerfile (blocking on warning+)
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: warning
 
-      - name: Step 1 - Resolve upstream versions and release notes
-        id: upstream
+  gitleaks:
+    name: Gitleaks secret scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install and verify Gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="8.30.1"
+          SHA="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+          curl -fsSLo /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+          echo "${SHA}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          rm -f /tmp/gitleaks /tmp/gitleaks.tar.gz
+      - name: Scan git history for secrets
+        shell: bash
+        run: gitleaks git --verbose --redact --no-banner
+
+  resolve:
+    name: Resolve upstream releases and base digests
+    needs: [public-check, hadolint, gitleaks]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      upstream_version: ${{ steps.resolve.outputs.upstream_version }}
+      unbound_sha256: ${{ steps.resolve.outputs.unbound_sha256 }}
+      ldns_version: ${{ steps.resolve.outputs.ldns_version }}
+      ldns_sha256: ${{ steps.resolve.outputs.ldns_sha256 }}
+      debian_base: ${{ steps.resolve.outputs.debian_base }}
+      base_digest: ${{ steps.resolve.outputs.base_digest }}
+      build_date: ${{ steps.resolve.outputs.build_date }}
+      build_date_iso: ${{ steps.resolve.outputs.build_date_iso }}
+      created: ${{ steps.resolve.outputs.created }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve upstream versions, checksums, and base digests
+        id: resolve
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_UNBOUND: ${{ inputs.unbound_version }}
+          INPUT_LDNS: ${{ inputs.ldns_version }}
         run: |
           set -euo pipefail
-
           api() {
-            curl -fsSL \
-              -H 'Accept: application/vnd.github+json' \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H 'X-GitHub-Api-Version: 2022-11-28' \
-              "$@"
+            curl -fsSL               -H 'Accept: application/vnd.github+json'               -H "Authorization: Bearer $GH_TOKEN"               -H 'X-GitHub-Api-Version: 2022-11-28'               "$@"
           }
 
           UNBOUND_REL_JSON="$(api https://api.github.com/repos/NLnetLabs/unbound/releases/latest)"
-          UNBOUND_VER="${{ inputs.unbound_version }}"
+          UNBOUND_VER="${INPUT_UNBOUND}"
           if [ -z "$UNBOUND_VER" ]; then
             UNBOUND_VER="$(printf '%s' "$UNBOUND_REL_JSON" | jq -r '.tag_name // empty' | sed 's/^release-//')"
           fi
@@ -91,183 +135,335 @@ jobs:
           UNBOUND_SHA256="$(curl -fsSL --retry 3 "https://nlnetlabs.nl/downloads/unbound/unbound-${UNBOUND_VER}.tar.gz.sha256" | awk '{print $1}')"
           test "${#UNBOUND_SHA256}" -eq 64
 
-          LDNS_VER="${{ inputs.ldns_version }}"
+          LDNS_VER="${INPUT_LDNS}"
           if [ -z "$LDNS_VER" ]; then
-            LDNS_VER="$(curl -fsSL --retry 3 https://nlnetlabs.nl/downloads/ldns/ \
-              | grep -oE 'ldns-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' \
-              | sed -E 's/^ldns-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz$/\1/' \
-              | sort -Vu | tail -n 1)"
+            LDNS_VER="$(curl -fsSL --retry 3 https://nlnetlabs.nl/downloads/ldns/               | grep -oE 'ldns-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz'               | sed -E 's/^ldns-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz$/\1/'               | sort -Vu | tail -n 1)"
           fi
           test -n "$LDNS_VER" || LDNS_VER="${LDNS_VERSION_DEFAULT}"
 
           LDNS_SHA256="$(curl -fsSL --retry 3 "https://nlnetlabs.nl/downloads/ldns/ldns-${LDNS_VER}.tar.gz.sha256" | awk '{print $1}')"
           test "${#LDNS_SHA256}" -eq 64
 
+          BASE_DIGEST="$(curl -fsSL "https://hub.docker.com/v2/repositories/library/debian/tags/trixie-slim" | jq -r '.digest // empty')"
+          DEBIAN_BASE="debian:trixie-slim"
+          [ -n "$BASE_DIGEST" ] && DEBIAN_BASE="${DEBIAN_BASE}@${BASE_DIGEST}"
+
           : > upstream-changes.md
-          OLD_UNBOUND="$(jq -r '.components.unbound // ""' versions.json 2>/dev/null || true)"
+          OLD_UNBOUND="$(jq -r '.upstream_version // .components.unbound // ""' versions.json 2>/dev/null || true)"
           if [ "$UNBOUND_VER" != "$OLD_UNBOUND" ]; then
             echo "## Unbound ${UNBOUND_VER}" >> upstream-changes.md
             printf '%s\n\n' "$(printf '%s' "$UNBOUND_REL_JSON" | jq -r '.body // ""')" >> upstream-changes.md
           fi
 
           BUILD_DATE="$(date -u +%Y%m%d)"
-          BUILD_ISO_DATE="$(date -u +%Y-%m-%d)"
+          BUILD_DATE_ISO="$(date -u +%Y-%m-%d)"
           CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
           {
-            echo "unbound_version=${UNBOUND_VER}"
+            echo "upstream_version=${UNBOUND_VER}"
             echo "unbound_sha256=${UNBOUND_SHA256}"
             echo "ldns_version=${LDNS_VER}"
             echo "ldns_sha256=${LDNS_SHA256}"
+            echo "debian_base=${DEBIAN_BASE}"
+            echo "base_digest=${BASE_DIGEST}"
             echo "build_date=${BUILD_DATE}"
-            echo "build_iso_date=${BUILD_ISO_DATE}"
+            echo "build_date_iso=${BUILD_DATE_ISO}"
             echo "created=${CREATED}"
-          } >> "$GITHUB_OUTPUT"
+          } >> "$GITHUB_OUTPUT" 
 
-          {
-            echo "### Resolved upstream versions"
-            echo ""
-            echo "| Component | Version | SHA-256 |"
-            echo "|---|---|---|"
-            echo "| Unbound | ${UNBOUND_VER} | \`${UNBOUND_SHA256}\` |"
-            echo "| ldns | ${LDNS_VER} | \`${LDNS_SHA256}\` |"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload upstream-changes artifact
-        uses: actions/upload-artifact@v7
+      - name: Upload upstream changes artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: upstream-changes
           path: upstream-changes.md
           retention-days: 90
           if-no-files-found: ignore
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+  build-test-scan:
+    name: Build, smoke, Dive, SBOM & scan (${{ matrix.arch }})
+    needs: resolve
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+            dive_sha: 0970549eb4a306f8825a84145a2534153badb4d7dcf3febd1967c706367c3d0e
+            syft_sha: ad92bd3ec1b94a3df01d4d0aec199afa9c42b72e86da436ff5f837914d32706b
+            grype_sha: f1ba7e2917ee1395618de20a98da0aa7c0fb1788927797651047c50502a37538
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            dive_sha: 2fcd2cf20f634ccdb41efac44048b204bfc867c115641f37a7420693ed480a18
+            syft_sha: 8efe605309c98798e1ee0cffdcf8c05ca26819b4cd44c0b03650f1e963e9bdb6
+            grype_sha: 819e5be3d9516432fedb7b6b56df7306c3a16607606dfc05826eefbb00e471da
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Step 2 - Build linux/amd64 image
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build ${{ matrix.platform }} image
         id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          platforms: linux/amd64
+          platforms: ${{ matrix.platform }}
           load: true
           no-cache: ${{ github.event_name == 'schedule' }}
           tags: |
-            ${{ env.IMAGE_NAME }}:ci-candidate
+            ${{ env.IMAGE_NAME }}:ci-candidate-${{ matrix.arch }}
           build-args: |
-            UNBOUND_VERSION=${{ steps.upstream.outputs.unbound_version }}
-            UNBOUND_SHA256=${{ steps.upstream.outputs.unbound_sha256 }}
-            LDNS_VERSION=${{ steps.upstream.outputs.ldns_version }}
-            LDNS_SHA256=${{ steps.upstream.outputs.ldns_sha256 }}
-            IMAGE_CREATED=${{ steps.upstream.outputs.created }}
+            DEBIAN_BASE=${{ needs.resolve.outputs.debian_base }}
+            UNBOUND_VERSION=${{ needs.resolve.outputs.upstream_version }}
+            UNBOUND_SHA256=${{ needs.resolve.outputs.unbound_sha256 }}
+            LDNS_VERSION=${{ needs.resolve.outputs.ldns_version }}
+            LDNS_SHA256=${{ needs.resolve.outputs.ldns_sha256 }}
+            IMAGE_CREATED=${{ needs.resolve.outputs.created }}
             IMAGE_REVISION=${{ github.sha }}
             IMAGE_SOURCE=https://github.com/${{ github.repository }}
 
-      - name: Record exact Debian release inside built image
-        id: os_meta
+      - name: Inspect OS version and image size
+        id: inspect_image
         shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          DEBIAN_VER="$(docker run --rm --entrypoint cat "${IMAGE_NAME}:ci-candidate" /etc/debian_version | tr -d '\r\n')"
-          echo "debian_version=${DEBIAN_VER}" >> "$GITHUB_OUTPUT"
-          echo "Built image Debian version: ${DEBIAN_VER}"
+          IMG="${IMAGE_NAME}:ci-candidate-${ARCH}"
+          DEBIAN_VERSION="$(docker run --rm --entrypoint cat "$IMG" /etc/debian_version | tr -d '\r\n')"
+          SIZE_BYTES="$(docker image inspect --format='{{.Size}}' "$IMG")"
+          SIZE_MB="$(python3 -c "print(f'{int(${SIZE_BYTES})/1000000:.1f}')")"
+          echo "debian_version=${DEBIAN_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "size_bytes=${SIZE_BYTES}" >> "$GITHUB_OUTPUT"
+          echo "size_mb=${SIZE_MB}" >> "$GITHUB_OUTPUT"
+          echo "Detected (${ARCH}): Debian=${DEBIAN_VERSION}, Size=${SIZE_MB} MB (${SIZE_BYTES} bytes)"
+          echo "### Image size (${ARCH}): **${SIZE_MB} MB** (${SIZE_BYTES} bytes)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Step 3a - Trivy full report (table, informational)
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Smoke-test container (${{ matrix.arch }})
+        shell: bash
+        run: ./tests/smoke.sh "${IMAGE_NAME}:ci-candidate-${{ matrix.arch }}"
+
+      - name: Install verified Dive, Syft, and Grype (${{ matrix.arch }})
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          DIVE_SHA: ${{ matrix.dive_sha }}
+          SYFT_SHA: ${{ matrix.syft_sha }}
+          GRYPE_SHA: ${{ matrix.grype_sha }}
+        run: |
+          set -euo pipefail
+          curl -fsSLo /tmp/dive.tar.gz "https://github.com/wagoodman/dive/releases/download/v0.13.1/dive_0.13.1_linux_${ARCH}.tar.gz"
+          echo "${DIVE_SHA}  /tmp/dive.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/dive.tar.gz -C /tmp dive
+          install -m 0755 /tmp/dive /usr/local/bin/dive
+
+          curl -fsSLo /tmp/syft.tar.gz "https://github.com/anchore/syft/releases/download/v1.57.2/syft_1.57.2_linux_${ARCH}.tar.gz"
+          echo "${SYFT_SHA}  /tmp/syft.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/syft.tar.gz -C /tmp syft
+          install -m 0755 /tmp/syft /usr/local/bin/syft
+
+          curl -fsSLo /tmp/grype.tar.gz "https://github.com/anchore/grype/releases/download/v0.122.1/grype_0.122.1_linux_${ARCH}.tar.gz"
+          echo "${GRYPE_SHA}  /tmp/grype.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/grype.tar.gz -C /tmp grype
+          install -m 0755 /tmp/grype /usr/local/bin/grype
+
+          rm -f /tmp/dive /tmp/dive.tar.gz /tmp/syft /tmp/syft.tar.gz /tmp/grype /tmp/grype.tar.gz
+
+      - name: Dive image efficiency gate (${{ matrix.arch }})
+        shell: bash
+        env:
+          CI: 'true'
+        run: dive --ci-config .dive-ci "${IMAGE_NAME}:ci-candidate-${{ matrix.arch }}"
+
+      - name: Generate SPDX and CycloneDX SBOMs with Syft (${{ matrix.arch }})
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          IMG="docker:${IMAGE_NAME}:ci-candidate-${ARCH}"
+          syft "$IMG" -o "spdx-json=sbom-${ARCH}.spdx.json"
+          syft "$IMG" -o "cyclonedx-json=sbom-${ARCH}.cdx.json"
+
+      - name: Scan image with Trivy — informational table (${{ matrix.arch }})
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate'
+          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate-${{ matrix.arch }}'
           format: 'table'
-          severity: 'CRITICAL,HIGH'
           vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
           exit-code: '0'
-          output: 'trivy-report.txt'
+          output: 'trivy-report-${{ matrix.arch }}.txt'
 
-      - name: Step 3b - Trivy JSON report (for CVE diffing)
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Scan image with Trivy — JSON for CVE diffing (${{ matrix.arch }})
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate'
+          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate-${{ matrix.arch }}'
           format: 'json'
-          severity: 'CRITICAL,HIGH'
           vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
           exit-code: '0'
-          output: 'trivy-report.json'
+          output: 'trivy-report-${{ matrix.arch }}.json'
 
-      - name: Step 3c - Trivy SARIF report for GitHub code scanning
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Compute CVE diff against previous build (${{ matrix.arch }})
+        shell: bash
+        run: python3 .github/scripts/cve-diff.py versions.json "trivy-report-${{ matrix.arch }}.json" "cve-diff-${{ matrix.arch }}.json"
+
+      - name: Scan image with Trivy — SARIF for code scanning (${{ matrix.arch }})
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate'
+          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate-${{ matrix.arch }}'
           format: 'sarif'
-          severity: 'CRITICAL,HIGH'
           vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
+          output: 'trivy-results-${{ matrix.arch }}.sarif'
           exit-code: '0'
-          output: 'trivy-results.sarif'
 
-      - name: Upload Trivy SARIF to code scanning
+      - name: Upload Trivy SARIF to code scanning (${{ matrix.arch }})
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@38112626f97ac1fd7acf3df7ebca51f4677c1b38 # codeql-bundle-v2.27.6
         with:
-          sarif_file: 'trivy-results.sarif'
-          category: trivy-unbound
+          sarif_file: 'trivy-results-${{ matrix.arch }}.sarif'
+          category: trivy-unbound-${{ matrix.arch }}
 
-      - name: Upload Trivy report artifacts (90 days)
-        uses: actions/upload-artifact@v7
+      - name: Scan image with Trivy — HARD GATE (0 fixable CRITICAL/HIGH, ${{ matrix.arch }})
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          name: trivy-report
-          path: |
-            trivy-report.txt
-            trivy-report.json
-          retention-days: 90
-          if-no-files-found: ignore
-
-      - name: Step 3d - Trivy HARD GATE (0 fixable CRITICAL/HIGH)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate'
+          image-ref: '${{ env.IMAGE_NAME }}:ci-candidate-${{ matrix.arch }}'
           format: 'table'
-          severity: 'CRITICAL,HIGH'
           vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
           exit-code: '1'
 
-      - name: Step 3e - Grype HARD GATE (0 fixable CRITICAL/HIGH)
-        id: grype
-        uses: anchore/scan-action@v7
-        with:
-          image: '${{ env.IMAGE_NAME }}:ci-candidate'
-          only-fixed: true
-          severity-cutoff: high
-          fail-build: true
-          output-format: table
-          output-file: grype-report.txt
+      - name: Scan SPDX SBOM with Grype — HARD GATE (0 fixable CRITICAL/HIGH, ${{ matrix.arch }})
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          grype "sbom:sbom-${ARCH}.spdx.json" --only-fixed --fail-on high -o table | tee "grype-report-${ARCH}.txt"
 
-      - name: Upload Grype report artifact (90 days)
-        if: always() && steps.build.outcome == 'success'
-        uses: actions/upload-artifact@v7
+      - name: Log in to GHCR for verified per-arch digest staging
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
-          name: grype-report
-          path: grype-report.txt
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push verified ${{ matrix.platform }} manifest by digest to GHCR
+        id: push_digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          sbom: false
+          outputs: type=image,name=ghcr.io/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            DEBIAN_BASE=${{ needs.resolve.outputs.debian_base }}
+            UNBOUND_VERSION=${{ needs.resolve.outputs.upstream_version }}
+            UNBOUND_SHA256=${{ needs.resolve.outputs.unbound_sha256 }}
+            LDNS_VERSION=${{ needs.resolve.outputs.ldns_version }}
+            LDNS_SHA256=${{ needs.resolve.outputs.ldns_sha256 }}
+            IMAGE_CREATED=${{ needs.resolve.outputs.created }}
+            IMAGE_REVISION=${{ github.sha }}
+            IMAGE_SOURCE=https://github.com/${{ github.repository }}
+
+      - name: Record per-arch metadata
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          DIGEST: ${{ steps.push_digest.outputs.digest }}
+          DEBIAN_VERSION: ${{ steps.inspect_image.outputs.debian_version }}
+          SIZE_BYTES: ${{ steps.inspect_image.outputs.size_bytes }}
+          SIZE_MB: ${{ steps.inspect_image.outputs.size_mb }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg arch "$ARCH" \
+            --arg digest "$DIGEST" \
+            --arg debian_version "$DEBIAN_VERSION" \
+            --arg size_mb "$SIZE_MB" \
+            --argjson size_bytes "$SIZE_BYTES" \
+            '{arch: $arch, digest: $digest, debian_version: $debian_version, size_mb: $size_mb, size_bytes: $size_bytes}' \
+            > "arch-meta-${ARCH}.json"
+
+      - name: Upload per-arch reports, SBOMs, and metadata
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: arch-artifacts-${{ matrix.arch }}
+          path: |
+            arch-meta-${{ matrix.arch }}.json
+            sbom-${{ matrix.arch }}.spdx.json
+            sbom-${{ matrix.arch }}.cdx.json
+            trivy-report-${{ matrix.arch }}.txt
+            trivy-report-${{ matrix.arch }}.json
+            cve-diff-${{ matrix.arch }}.json
+            grype-report-${{ matrix.arch }}.txt
           retention-days: 90
           if-no-files-found: ignore
 
-      - name: Generate SPDX SBOM with Syft
-        uses: anchore/sbom-action@v0
+  publish:
+    name: Publish multi-arch index, Cosign sign/attest, SLSA L3, and Release
+    needs: [resolve, build-test-scan]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          image: '${{ env.IMAGE_NAME }}:ci-candidate'
-          format: 'spdx-json'
-          output-file: 'sbom.spdx.json'
-          upload-artifact: false
+          persist-credentials: false
 
-      - name: Upload SBOM artifact (90 days)
-        uses: actions/upload-artifact@v7
+      - name: Download per-arch artifacts and upstream changes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: sbom-spdx-json
-          path: sbom.spdx.json
-          retention-days: 90
+          path: .ci-in
 
-      - name: Step 4 - Smoke test (DNS, DNSSEC, non-root drop, negative tests)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Install verified crane
         shell: bash
-        run: ./tests/smoke.sh "${IMAGE_NAME}:ci-candidate"
+        run: |
+          set -euo pipefail
+          SHA="0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0"
+          curl -fsSLo /tmp/crane.tar.gz "https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz"
+          echo "${SHA}  /tmp/crane.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/crane.tar.gz -C /tmp crane
+          install -m 0755 /tmp/crane /usr/local/bin/crane
+          rm -f /tmp/crane /tmp/crane.tar.gz
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check Docker Hub publish credentials
         id: hub_auth
@@ -276,109 +472,271 @@ jobs:
           DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
           DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          if [ "${{ github.event_name }}" != "pull_request" ] && [ -n "$DH_USER" ] && [ -n "$DH_TOKEN" ]; then
-            echo "can_publish=true" >> "$GITHUB_OUTPUT"
+          if [ -n "$DH_USER" ] && [ -n "$DH_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
-            echo "can_publish=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping Docker Hub push (PR event or DOCKERHUB_USERNAME/DOCKERHUB_TOKEN not configured)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Docker Hub secrets not configured; publishing to GHCR only."
           fi
 
       - name: Log in to Docker Hub
-        if: steps.hub_auth.outputs.can_publish == 'true'
-        uses: docker/login-action@v4
+        if: steps.hub_auth.outputs.enabled == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Step 5 - Tag and push verified image to Docker Hub
-        if: steps.hub_auth.outputs.can_publish == 'true'
-        id: push
+      - name: Assemble multi-arch index on GHCR and mirror identical digest to Docker Hub
+        id: index
         shell: bash
         env:
-          VERSION: ${{ steps.upstream.outputs.unbound_version }}
-          BUILD_DATE: ${{ steps.upstream.outputs.build_date }}
+          VER: ${{ needs.resolve.outputs.upstream_version }}
+          BDATE: ${{ needs.resolve.outputs.build_date }}
+          HUB_ENABLED: ${{ steps.hub_auth.outputs.enabled }}
         run: |
           set -euo pipefail
-          for tag in \
-            "${IMAGE_NAME}:${VERSION}-${BUILD_DATE}" \
-            "${IMAGE_NAME}:${VERSION}" \
-            "${IMAGE_NAME}:latest" \
-            "${IMAGE_NAME}:sha-${GITHUB_SHA::7}"; do
-            docker tag "${IMAGE_NAME}:ci-candidate" "$tag"
-            docker push "$tag"
-          done
-          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE_NAME}:latest")"
-          echo "Published digest: ${DIGEST}"
-          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          DIG_AMD64="$(jq -r '.digest' .ci-in/arch-artifacts-amd64/arch-meta-amd64.json)"
+          DIG_ARM64="$(jq -r '.digest' .ci-in/arch-artifacts-arm64/arch-meta-arm64.json)"
+          test -n "$DIG_AMD64" && test -n "$DIG_ARM64"
 
-      - name: Prepare release metadata and CVE diff for docs auto-update
+          SHA_TAG="sha-${GITHUB_SHA::7}"
+          DATE_TAG="${VER}-${BDATE}"
+
+          docker buildx imagetools create \
+            -t "ghcr.io/${IMAGE_NAME}:latest" \
+            -t "ghcr.io/${IMAGE_NAME}:${VER}" \
+            -t "ghcr.io/${IMAGE_NAME}:${DATE_TAG}" \
+            -t "ghcr.io/${IMAGE_NAME}:${SHA_TAG}" \
+            "ghcr.io/${IMAGE_NAME}@${DIG_AMD64}" \
+            "ghcr.io/${IMAGE_NAME}@${DIG_ARM64}"
+
+          INDEX_DIGEST="$(crane digest "ghcr.io/${IMAGE_NAME}:latest")"
+          echo "GHCR multi-arch index digest: ${INDEX_DIGEST}"
+
+          if [ "$HUB_ENABLED" = "true" ]; then
+            crane copy "ghcr.io/${IMAGE_NAME}@${INDEX_DIGEST}" "index.docker.io/${IMAGE_NAME}:latest"
+            for tag in "${VER}" "${DATE_TAG}" "${SHA_TAG}"; do
+              crane tag "index.docker.io/${IMAGE_NAME}@${INDEX_DIGEST}" "${tag}"
+            done
+            HUB_DIGEST="$(crane digest "index.docker.io/${IMAGE_NAME}:latest")"
+            echo "Docker Hub multi-arch index digest: ${HUB_DIGEST}"
+            test "${HUB_DIGEST}" = "${INDEX_DIGEST}"
+          fi
+
+          {
+            echo "index_digest=${INDEX_DIGEST}"
+            echo "amd64_digest=${DIG_AMD64}"
+            echo "arm64_digest=${DIG_ARM64}"
+            echo "date_tag=${DATE_TAG}"
+            echo "sha_tag=${SHA_TAG}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Keyless Cosign sign and SBOM attest (GHCR + Docker Hub)
         shell: bash
         env:
-          UNBOUND_VER: ${{ steps.upstream.outputs.unbound_version }}
-          LDNS_VER: ${{ steps.upstream.outputs.ldns_version }}
-          DEBIAN_VER: ${{ steps.os_meta.outputs.debian_version }}
-          BUILD_ISO_DATE: ${{ steps.upstream.outputs.build_iso_date }}
-          PUBLISHED_DIGEST: ${{ steps.push.outputs.digest }}
+          INDEX_DIGEST: ${{ steps.index.outputs.index_digest }}
+          DIG_AMD64: ${{ steps.index.outputs.amd64_digest }}
+          DIG_ARM64: ${{ steps.index.outputs.arm64_digest }}
+          HUB_ENABLED: ${{ steps.hub_auth.outputs.enabled }}
         run: |
-          python3 - <<'PY'
-          import json, os
+          set -euo pipefail
+          REGISTRIES=("ghcr.io/${IMAGE_NAME}")
+          if [ "$HUB_ENABLED" = "true" ]; then
+            REGISTRIES+=("index.docker.io/${IMAGE_NAME}")
+          fi
 
-          old = json.load(open("versions.json")) if os.path.exists("versions.json") else {}
-          prev_unfixed = set(old.get("unfixed_high_critical") or [])
+          for reg in "${REGISTRIES[@]}"; do
+            cosign sign --yes "${reg}@${INDEX_DIGEST}"
+            cosign sign --yes "${reg}@${DIG_AMD64}"
+            cosign sign --yes "${reg}@${DIG_ARM64}"
+            cosign attest --yes --predicate .ci-in/arch-artifacts-amd64/sbom-amd64.spdx.json --type spdxjson "${reg}@${DIG_AMD64}"
+            cosign attest --yes --predicate .ci-in/arch-artifacts-amd64/sbom-amd64.cdx.json --type cyclonedx "${reg}@${DIG_AMD64}"
+            cosign attest --yes --predicate .ci-in/arch-artifacts-arm64/sbom-arm64.spdx.json --type spdxjson "${reg}@${DIG_ARM64}"
+            cosign attest --yes --predicate .ci-in/arch-artifacts-arm64/sbom-arm64.cdx.json --type cyclonedx "${reg}@${DIG_ARM64}"
+          done
 
-          cur_unfixed = set()
-          if os.path.exists("trivy-report.json"):
-              tr = json.load(open("trivy-report.json"))
-              for res in tr.get("Results") or []:
-                  for v in res.get("Vulnerabilities") or []:
-                      if v.get("Severity") in ("CRITICAL", "HIGH") and not v.get("FixedVersion"):
-                          cur_unfixed.add(v["VulnerabilityID"])
+      - name: Attest SLSA Build L3 provenance (GHCR)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.index.outputs.index_digest }}
+          push-to-registry: true
 
-          fixed_cves = sorted(prev_unfixed - cur_unfixed)
-          json.dump({"fixed_cves": fixed_cves}, open("cve-diff.json", "w"), indent=2)
+      - name: Attest SLSA Build L3 provenance (Docker Hub)
+        if: steps.hub_auth.outputs.enabled == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: index.docker.io/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.index.outputs.index_digest }}
+          push-to-registry: true
 
-          new_versions = {
-              "image": os.environ["IMAGE_NAME"],
-              "upstream_version": os.environ["UNBOUND_VER"],
-              "debian_version": os.environ["DEBIAN_VER"],
-              "components": {
-                  "unbound": os.environ["UNBOUND_VER"],
-                  "ldns": os.environ["LDNS_VER"],
+      - name: Publish signed GitHub Release with SBOMs and checksums
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.index.outputs.date_tag }}
+          VER: ${{ needs.resolve.outputs.upstream_version }}
+          INDEX_DIGEST: ${{ steps.index.outputs.index_digest }}
+          DIG_AMD64: ${{ steps.index.outputs.amd64_digest }}
+          DIG_ARM64: ${{ steps.index.outputs.arm64_digest }}
+          HUB_ENABLED: ${{ steps.hub_auth.outputs.enabled }}
+        run: |
+          set -euo pipefail
+          mkdir -p .rel
+          cp .ci-in/arch-artifacts-amd64/sbom-amd64.spdx.json .rel/
+          cp .ci-in/arch-artifacts-amd64/sbom-amd64.cdx.json .rel/
+          cp .ci-in/arch-artifacts-arm64/sbom-arm64.spdx.json .rel/
+          cp .ci-in/arch-artifacts-arm64/sbom-arm64.cdx.json .rel/
+
+          AMD64_MB="$(jq -r '.size_mb' .ci-in/arch-artifacts-amd64/arch-meta-amd64.json)"
+          ARM64_MB="$(jq -r '.size_mb' .ci-in/arch-artifacts-arm64/arch-meta-arm64.json)"
+          DEBIAN_VER="$(jq -r '.debian_version' .ci-in/arch-artifacts-amd64/arch-meta-amd64.json)"
+
+          (
+            cd .rel
+            {
+              echo "# Multi-arch OCI digests"
+              echo "${INDEX_DIGEST}  ghcr.io/${IMAGE_NAME}:${TAG}"
+              [ "$HUB_ENABLED" = "true" ] && echo "${INDEX_DIGEST}  docker.io/${IMAGE_NAME}:${TAG}"
+              echo "${DIG_AMD64}  linux/amd64"
+              echo "${DIG_ARM64}  linux/arm64"
+              echo "# SBOM SHA-256 checksums"
+              sha256sum sbom-*.json
+            } > checksums.txt
+            cosign sign-blob --yes --bundle checksums.txt.sigstore.json checksums.txt
+          )
+
+          cat > .rel/notes.md <<EOF
+          ## NLnet Labs Unbound ${VER} (${TAG})
+
+          Maintained by **Daniel G. Cosenza from FNX Labs**.
+
+          ### Verified Components
+          - **NLnet Labs Unbound:** \`${VER}\`
+          - **Base OS:** Debian \`${DEBIAN_VER}\` (\`trixie-slim\`)
+          - **Architectures:** \`linux/amd64\` (${AMD64_MB} MB), \`linux/arm64\` (${ARM64_MB} MB)
+          - **Security gate:** 0 fixable Critical/High (Trivy + Grype on SPDX SBOM), Dive efficiency >= 95%
+
+          ### Identical Multi-Arch Digests
+          - **GHCR:** \`ghcr.io/${IMAGE_NAME}@${INDEX_DIGEST}\`
+          - **Docker Hub:** \`${IMAGE_NAME}@${INDEX_DIGEST}\`
+
+          ### Cosign Verification
+          \`\`\`bash
+          cosign verify \\
+            --certificate-identity-regexp="^https://github\\.com/${GITHUB_REPOSITORY}/\\.github/workflows/daily\\.yml@refs/heads/main$" \\
+            --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \\
+            ghcr.io/${IMAGE_NAME}@${INDEX_DIGEST}
+          \`\`\`
+          EOF
+
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --title "NLnet Labs Unbound ${VER} (${TAG})" --notes-file .rel/notes.md
+            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber \
+              .rel/checksums.txt .rel/checksums.txt.sigstore.json \
+              .rel/sbom-amd64.spdx.json .rel/sbom-amd64.cdx.json \
+              .rel/sbom-arm64.spdx.json .rel/sbom-arm64.cdx.json
+          else
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+              --title "NLnet Labs Unbound ${VER} (${TAG})" \
+              --notes-file .rel/notes.md \
+              .rel/checksums.txt .rel/checksums.txt.sigstore.json \
+              .rel/sbom-amd64.spdx.json .rel/sbom-amd64.cdx.json \
+              .rel/sbom-arm64.spdx.json .rel/sbom-arm64.cdx.json
+          fi
+
+      - name: Build updated versions metadata
+        shell: bash
+        env:
+          INDEX_DIGEST: ${{ steps.index.outputs.index_digest }}
+          HUB_ENABLED: ${{ steps.hub_auth.outputs.enabled }}
+        run: |
+          set -euo pipefail
+          DEBIAN_VER="$(jq -r '.debian_version' .ci-in/arch-artifacts-amd64/arch-meta-amd64.json)"
+          AMD64_MB="$(jq -r '.size_mb' .ci-in/arch-artifacts-amd64/arch-meta-amd64.json)"
+          ARM64_MB="$(jq -r '.size_mb' .ci-in/arch-artifacts-arm64/arch-meta-arm64.json)"
+          HUB_REF=""
+          [ "$HUB_ENABLED" = "true" ] && HUB_REF="${IMAGE_NAME}@${INDEX_DIGEST}"
+          GHCR_REF="ghcr.io/${IMAGE_NAME}@${INDEX_DIGEST}"
+
+          if [ -f .ci-in/upstream-changes/upstream-changes.md ]; then
+            cp .ci-in/upstream-changes/upstream-changes.md upstream-changes.md
+          else
+            : > upstream-changes.md
+          fi
+          cp .ci-in/arch-artifacts-amd64/cve-diff-amd64.json cve-diff.json
+
+          jq -n \
+            --arg image "${IMAGE_NAME}" \
+            --arg upstream_name "NLnetLabs/unbound" \
+            --arg upstream_license "BSD-3-Clause" \
+            --arg upstream_version "${{ needs.resolve.outputs.upstream_version }}" \
+            --arg ldns_version "${{ needs.resolve.outputs.ldns_version }}" \
+            --arg debian_version "${DEBIAN_VER}" \
+            --arg base_digest "${{ needs.resolve.outputs.base_digest }}" \
+            --arg build_date "${{ needs.resolve.outputs.build_date_iso }}" \
+            --arg built_at_utc "${{ needs.resolve.outputs.created }}" \
+            --arg image_digest "${HUB_REF}" \
+            --arg ghcr_digest "${GHCR_REF}" \
+            --arg amd64_mb "${AMD64_MB}" \
+            --arg arm64_mb "${ARM64_MB}" \
+            --slurpfile cve cve-diff.json \
+            '{
+              image: $image,
+              upstream_name: $upstream_name,
+              upstream_license: $upstream_license,
+              packaging_license: "MIT",
+              upstream_version: $upstream_version,
+              changelog_version: $upstream_version,
+              architectures: ["linux/amd64", "linux/arm64"],
+              sizes_mb: { amd64: $amd64_mb, arm64: $arm64_mb },
+              signed: true,
+              slsa_provenance: true,
+              components: {
+                "Unbound": $upstream_version,
+                "ldns": $ldns_version,
+                "Base OS": ("Debian " + $debian_version + " (trixie-slim)")
               },
-              "last_build_date": os.environ["BUILD_ISO_DATE"],
-              "last_digest": os.environ.get("PUBLISHED_DIGEST", ""),
-              "unfixed_high_critical": sorted(cur_unfixed),
-          }
-          json.dump(new_versions, open("versions.new.json", "w"), indent=2)
-          PY
+              base_image: "debian:trixie-slim",
+              base_digest: $base_digest,
+              debian_version: $debian_version,
+              build_date: $build_date,
+              built_at_utc: $built_at_utc,
+              image_digest: $image_digest,
+              ghcr_digest: $ghcr_digest,
+              fixable_critical_high: ($cve[0].fixable_critical_high // 0),
+              unfixed_cves: ($cve[0].unfixed_cves // [])
+            }' > versions-new.json
 
       - name: Upload release metadata artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-meta
+          name: release-metadata
           path: |
-            versions.new.json
+            versions-new.json
             upstream-changes.md
             cve-diff.json
-          retention-days: 7
+          retention-days: 90
 
   update-docs:
-    name: Step 6 - Auto-update docs and sync Docker Hub overview
-    needs: [public-check, build-scan-publish]
+    name: Update docs and sync Docker Hub overview
+    needs: publish
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Download release metadata
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-meta
+          name: release-metadata
           path: .ci-meta
 
       - name: Update versions.json, README.md, and CHANGELOG.md
@@ -386,29 +744,31 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/scripts/update-docs.py \
-            .ci-meta/versions.new.json \
+            .ci-meta/versions-new.json \
             .ci-meta/upstream-changes.md \
             .ci-meta/cve-diff.json
           rm -rf .ci-meta
+          .github/scripts/public-check.sh
 
-      - name: Verify public content check before bot commit
-        run: .github/scripts/public-check.sh
-
-      - name: Commit and push documentation updates if changed
+      - name: Commit and push updated documentation (if changed)
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if git diff --quiet -- versions.json README.md CHANGELOG.md; then
-            echo "No tracked documentation changes to commit."
-            exit 0
+          if [ -n "$(git status --porcelain versions.json README.md CHANGELOG.md)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add versions.json README.md CHANGELOG.md
+            git commit -m "chore(docs): update daily build metadata and changelog [skip ci]"
+            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          else
+            echo "No documentation or version metadata changes to commit."
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add versions.json README.md CHANGELOG.md
-          git commit -m "chore(deps): daily version and changelog update [skip ci]"
-          git push origin main
 
-      - name: Check Docker Hub credentials for overview sync
+      - name: Check Docker Hub sync credentials
         id: hub_sync
         shell: bash
         env:
@@ -429,7 +789,7 @@ jobs:
 
       - name: Sync Docker Hub repository overview (short & full description)
         if: steps.hub_sync.outputs.enabled == 'true'
-        uses: peter-evans/dockerhub-description@v5
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -437,53 +797,54 @@ jobs:
           short-description: ${{ steps.hub_sync.outputs.short_desc }}
           readme-filepath: ./README.md
 
-  alert:
-    name: Step 7 - Open/update or close ci-failure issue
-    needs: [public-check, build-scan-publish, update-docs]
-    if: always() && (github.event_name == 'schedule' || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main'))
+  alert-on-status:
+    name: Manage CI failure alert issue
+    needs: [public-check, hadolint, gitleaks, resolve, build-test-scan, publish, update-docs]
+    if: always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       issues: write
     steps:
-      - name: Reconcile ci-failure issue state
+      - name: Open/update or auto-close ci-failure issue
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           RES_PUBLIC: ${{ needs.public-check.result }}
-          RES_BUILD: ${{ needs.build-scan-publish.result }}
+          RES_HADOLINT: ${{ needs.hadolint.result }}
+          RES_GITLEAKS: ${{ needs.gitleaks.result }}
+          RES_RESOLVE: ${{ needs.resolve.result }}
+          RES_BUILD: ${{ needs.build-test-scan.result }}
+          RES_PUBLISH: ${{ needs.publish.result }}
           RES_DOCS: ${{ needs.update-docs.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          FAILED_STEP=""
-          for pair in "public-check:${RES_PUBLIC}" "build-scan-publish:${RES_BUILD}" "update-docs:${RES_DOCS}"; do
-            job="${pair%%:*}"
-            res="${pair##*:}"
-            if [ "$res" = "failure" ]; then
-              FAILED_STEP="$job"
-              break
-            fi
-          done
+          FAILED=()
+          [ "$RES_PUBLIC" != "success" ] && FAILED+=("public-check (${RES_PUBLIC})")
+          [ "$RES_HADOLINT" != "success" ] && FAILED+=("hadolint (${RES_HADOLINT})")
+          [ "$RES_GITLEAKS" != "success" ] && FAILED+=("gitleaks (${RES_GITLEAKS})")
+          [ "$RES_RESOLVE" != "success" ] && FAILED+=("resolve (${RES_RESOLVE})")
+          [ "$RES_BUILD" != "success" ] && FAILED+=("build-test-scan (${RES_BUILD})")
+          [ "$RES_PUBLISH" != "success" ] && FAILED+=("publish (${RES_PUBLISH})")
+          [ "$RES_DOCS" != "success" ] && FAILED+=("update-docs (${RES_DOCS})")
 
-          gh label create ci-failure --repo "$GITHUB_REPOSITORY" --color B60205 \
-            --description "Automated daily build or security scan failure" 2>/dev/null || true
+          OPEN_ISSUE="$(gh issue list -R "$GITHUB_REPOSITORY" --label ci-failure --state open --json number --jq '.[0].number // empty')"
 
-          EXISTING="$(gh issue list --repo "$GITHUB_REPOSITORY" --label ci-failure --state open --json number --jq '.[0].number // empty')"
-
-          if [ -n "$FAILED_STEP" ]; then
-            TITLE="Daily build failed: ${FAILED_STEP}"
-            BODY="$(printf 'The daily pipeline failed on **%s**.\n\n- Workflow run: %s\n- Event: `%s`\n- Commit: `%s`\n- Job results: `public-check=%s`, `build-scan-publish=%s`, `update-docs=%s`\n' \
-              "$FAILED_STEP" "$RUN_URL" "${{ github.event_name }}" "${{ github.sha }}" "$RES_PUBLIC" "$RES_BUILD" "$RES_DOCS")"
-            if [ -n "$EXISTING" ]; then
-              gh issue edit "$EXISTING" --repo "$GITHUB_REPOSITORY" --title "$TITLE"
-              gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          if [ "${#FAILED[@]}" -gt 0 ]; then
+            gh label create ci-failure --repo "$GITHUB_REPOSITORY" --color B60205 --description "Automated daily CI failure alert" --force >/dev/null 2>&1 || true
+            FAIL_LIST="$(IFS=', '; echo "${FAILED[*]}")"
+            TITLE="Daily build failed: ${FAIL_LIST}"
+            BODY="$(printf 'Automated daily pipeline failed on `%s` (%s UTC).\n\n- **Failing job(s):** %s\n- **Event:** `%s`\n- **Workflow run:** %s\n' \
+              "$GITHUB_REF_NAME" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAIL_LIST" "${{ github.event_name }}" "$RUN_URL")"
+            if [ -n "$OPEN_ISSUE" ]; then
+              gh issue edit "$OPEN_ISSUE" -R "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY"
+              gh issue comment "$OPEN_ISSUE" -R "$GITHUB_REPOSITORY" --body "Latest failing run: ${RUN_URL} (${FAIL_LIST})."
             else
-              gh issue create --repo "$GITHUB_REPOSITORY" --label ci-failure --title "$TITLE" --body "$BODY"
+              gh issue create -R "$GITHUB_REPOSITORY" --label ci-failure --title "$TITLE" --body "$BODY"
             fi
-          elif [ "$RES_PUBLIC" = "success" ] && [ "$RES_BUILD" = "success" ] && { [ "$RES_DOCS" = "success" ] || [ "$RES_DOCS" = "skipped" ]; }; then
-            if [ -n "$EXISTING" ]; then
-              gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" \
-                --body "Resolved: pipeline is green again in ${RUN_URL} (commit \`${{ github.sha }}\`). Closing automatically."
-              gh issue close "$EXISTING" --repo "$GITHUB_REPOSITORY" --reason completed
-            fi
+          elif [ -n "$OPEN_ISSUE" ]; then
+            gh issue comment "$OPEN_ISSUE" -R "$GITHUB_REPOSITORY" --body "Daily pipeline recovered and passed on ${RUN_URL}. Closing automatically."
+            gh issue close "$OPEN_ISSUE" -R "$GITHUB_REPOSITORY"
+          else
+            echo "All jobs succeeded and no open ci-failure issue exists."
           fi

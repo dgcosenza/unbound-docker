@@ -1,16 +1,28 @@
-# Production-style compose example for dgcosenza/unbound
+# Hardened production-style compose example for dgcosenza/unbound
 #
 # Pin production deployments by @sha256 digest. This example runs Unbound on a
-# private bridge network as an upstream recursive/DNSSEC resolver for Pi-hole
-# or other internal clients.
+# private bridge network with minimal Linux capabilities (dropping ALL and
+# retaining only what is needed to bind port 53 and drop to uid 101 `unbound`).
+# For strict read_only: true rootfs, mount a writable volume at /var/unbound
+# (pre-seeded with root.hints and root.key) or disable auto-trust-anchor-file.
 
 services:
   unbound:
     image: dgcosenza/unbound:latest
     container_name: unbound
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - SETUID
+      - SETGID
+      - CHOWN
+      - DAC_OVERRIDE
     security_opt:
       - no-new-privileges:true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
     volumes:
       # Option A: drop-in override files alongside defaults
       - ./custom.conf.d:/etc/unbound/custom.conf.d:ro

@@ -1,258 +1,275 @@
-# NLnet Labs Unbound for Debian 13 (trixie)
+# NLnet Labs Unbound for Debian 13 (trixie-slim)
 
-[![Daily build, scan and publish](https://github.com/dgcosenza/unbound-docker/actions/workflows/daily.yml/badge.svg)](https://github.com/dgcosenza/unbound-docker/actions/workflows/daily.yml)
-[![Docker Hub pulls](https://img.shields.io/docker/pulls/dgcosenza/unbound.svg)](https://hub.docker.com/r/dgcosenza/unbound)
-[![Image size](https://img.shields.io/docker/image-size/dgcosenza/unbound/latest.svg)](https://hub.docker.com/r/dgcosenza/unbound)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Daily Unbound image](https://github.com/dgcosenza/unbound-docker/actions/workflows/daily.yml/badge.svg)](https://github.com/dgcosenza/unbound-docker/actions/workflows/daily.yml)
+[![Packaging License: MIT](https://img.shields.io/badge/packaging-MIT-blue.svg)](https://github.com/dgcosenza/unbound-docker/blob/main/LICENSE)
+[![Upstream License: BSD-3-Clause](https://img.shields.io/badge/upstream-BSD--3--Clause-green.svg)](https://github.com/NLnetLabs/unbound/blob/master/LICENSE)
+[![Signed with Cosign](https://img.shields.io/badge/signed-cosign%20OIDC-blueviolet.svg)](#supply-chain-verification)
+[![SLSA Level 3](https://img.shields.io/badge/SLSA-Level%203-brightgreen.svg)](#supply-chain-verification)
+[![Architectures](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-informational.svg)](#supported-architectures)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/dgcosenza/unbound-docker/badge)](https://scorecard.dev/viewer/?uri=github.com/dgcosenza/unbound-docker)
+[![Docker Pulls](https://img.shields.io/docker/pulls/dgcosenza/unbound)](https://hub.docker.com/r/dgcosenza/unbound)
+[![Docker Image Size](https://img.shields.io/docker/image-size/dgcosenza/unbound/latest)](https://hub.docker.com/r/dgcosenza/unbound)
+[![Latest Release](https://img.shields.io/github/v/release/dgcosenza/unbound-docker?label=version)](https://github.com/dgcosenza/unbound-docker/releases)
 
-A hardened, continuously rebuilt **Debian 13 (trixie)** container image of
-[NLnet Labs Unbound](https://nlnetlabs.nl/projects/unbound/about/), compiled
-from official verified source tarballs together with NLnet Labs
-[ldns](https://nlnetlabs.nl/projects/ldns/about/) (`drill`), IANA root hints,
-and an RFC 5011 DNSSEC root trust anchor initialized via `unbound-anchor`.
+A source-built, multi-arch, continuously rebuilt **Debian 13 (`trixie-slim`)** container image of [NLnet Labs Unbound](https://nlnetlabs.nl/projects/unbound/about/) and [ldns](https://nlnetlabs.nl/projects/ldns/about/) (`drill`), maintained by **Daniel G. Cosenza from FNX Labs**.
 
-It is a **drop-in replacement** for `klutchell/unbound`: same configuration
-paths (`/etc/unbound/unbound.conf` and `/etc/unbound/custom.conf.d/*.conf`),
-same DNSSEC anchor location (`/var/unbound/root.key`), same unprivileged
-service account (`unbound`, uid `101`, gid `102`), same `drill` healthcheck
-binary, and full compiled-in feature parity (OpenSSL 3, libevent, DNSCrypt,
-EDNS client subnet, cachedb, nghttp2, TCP Fast Open).
+- **Docker Hub:** [`dgcosenza/unbound`](https://hub.docker.com/r/dgcosenza/unbound)
+- **GitHub Container Registry (GHCR):** [`ghcr.io/dgcosenza/unbound`](https://github.com/dgcosenza/unbound-docker/pkgs/container/unbound) (identical signed multi-arch digest)
+- **Source Repository:** [`dgcosenza/unbound-docker`](https://github.com/dgcosenza/unbound-docker)
+- **Upstream Application:** [`NLnetLabs/unbound`](https://github.com/NLnetLabs/unbound) & [`NLnetLabs/ldns`](https://github.com/NLnetLabs/ldns) (`BSD-3-Clause`)
 
-## Current versions
+---
+
+## Overview
+
+`dgcosenza/unbound` compiles verified official NLnet Labs Unbound and ldns (`drill`) source tarballs on **Debian 13 (`trixie-slim`)** for both `linux/amd64` and `linux/arm64`, pre-seeded with fresh IANA root hints and an RFC 5011 DNSSEC root trust anchor initialized via `unbound-anchor`:
+
+- **Drop-in replacement for `klutchell/unbound`:** Preserves `/etc/unbound/unbound.conf`, `/etc/unbound/custom.conf.d/*.conf`, `/var/unbound/root.key`, `unbound` (`101:102`) privilege drop, `drill` (and `dig` symlink), and full compiled feature parity (OpenSSL 3, libevent, DNSCrypt, EDNS client subnet, cachedb, nghttp2, TCP Fast Open).
+- **Minimal-privilege execution:** Verified under `--cap-drop ALL` with only the minimal capabilities required to bind port `53` and drop privileges to uid `101` under `tini`.
+- **Hardened supply chain:** Hadolint + Gitleaks preflight, native multi-arch DNSSEC smoke tests, strict Dive efficiency gate (`>= 95%`, `<= 5%` wasted), Syft SPDX + CycloneDX SBOMs, Trivy + Grype (SBOM) zero-fixable High/Critical gates, Cosign keyless OIDC signatures & SBOM attestations, SLSA Build L3 provenance, dual-registry publishing, and signed GitHub Releases.
+
+---
+
+## Current Versions
 
 <!-- versions:start -->
-
-| Component | Resolved version |
-|---|---|
-| Base OS | Debian `13.8` (`debian:trixie-slim`) |
-| `unbound` | `1.26.2` |
-| `ldns` | `1.9.2` |
-| Last verified build | `2026-11-25` |
-| Fixable CRITICAL / HIGH CVEs | `0` (Trivy + Grype gate) |
-| Published digest | `dgcosenza/unbound@sha256:7e7186b9907298a8646775de478910730112ea5affc252ed39eeac45f99624b2` |
-
-Currently tracked unfixed upstream findings (no fix released): `CVE-2025-69720`, `CVE-2026-107494`, `CVE-2026-113351`, `CVE-2026-115506`, `CVE-2026-117610`, `CVE-2026-118370`, `CVE-2026-119373`, `CVE-2026-119374`, `CVE-2026-119379`, `CVE-2026-124709`.
-
+| Component | Resolved Version |
+| --- | --- |
+| Unbound | `1.26.2` |
+| ldns | `1.9.2` |
+| Base OS | `Debian 13.8 (trixie-slim)` |
+| Architectures | `linux/amd64, linux/arm64` |
+| Last verified build (UTC) | `2026-11-25` |
+| Supply chain | Cosign OIDC signed + SPDX & CycloneDX SBOM attestations + SLSA Build L3 provenance |
+| Security gate (Trivy + Grype on SBOM) | **0 fixable Critical/High** |
 <!-- versions:end -->
 
-## Supported tags
+---
 
-| Tag | Meaning |
-|---|---|
-| `latest` | Newest successfully built, tested, and scanned image |
-| `<unbound-version>` | Upstream Unbound release, e.g. `1.26.2` (moves on daily rebuilds of that release) |
-| `<unbound-version>-<YYYYMMDD>` | Immutable date-stamped build of that release |
-| `sha-<short>` | Immutable build of a specific repository commit |
+## Supported Tags & Tag Policy
 
-Pin production deployments by digest:
+Identical multi-arch OCI digests are published to **Docker Hub** (`dgcosenza/unbound`) and **GHCR** (`ghcr.io/dgcosenza/unbound`), accompanied by an automated signed [GitHub Release](https://github.com/dgcosenza/unbound-docker/releases):
 
-```bash
-docker pull dgcosenza/unbound:latest
-docker inspect --format='{{index .RepoDigests 0}}' dgcosenza/unbound:latest
-# image: dgcosenza/unbound@sha256:...
+| Tag | Policy | Description |
+| --- | --- | --- |
+| `<version>-<YYYYMMDD>` (e.g. `1.26.2-20261125`) | **Immutable** | Date-stamped daily rebuild pinning the Unbound release and UTC build date. |
+| `sha-<short>` | **Immutable** | Packaging repository Git commit tag. |
+| `<version>` (e.g. `1.26.2`) | Moving | Latest verified Debian 13 security rebuild of that Unbound release. |
+| `latest` | Moving | Latest verified build tracking the newest official Unbound release. |
+
+**Production pinning:** Pin by immutable digest:
+
+```yaml
+image: dgcosenza/unbound:1.26.2@sha256:<digest>
+# or via GitHub Container Registry (identical digest):
+image: ghcr.io/dgcosenza/unbound:1.26.2@sha256:<digest>
 ```
 
-## Quick start
+---
+
+## Supported Architectures
+
+| Architecture | Status | Verification |
+| --- | --- | --- |
+| `linux/amd64` | **Published & natively tested** | Compiled from verified tarballs, DNSSEC smoke-tested under minimal capabilities, Dive-gated, Syft/Trivy/Grype-scanned, and Cosign-signed on native x86_64 CI runners. |
+| `linux/arm64` | **Published & natively tested** | Compiled from verified tarballs, DNSSEC smoke-tested under minimal capabilities, Dive-gated, Syft/Trivy/Grype-scanned, and Cosign-signed on native ARM64 CI runners. |
+
+---
+
+## Quick Start
+
+### `docker run` (hardened minimal capabilities)
 
 ```bash
 docker run -d --name unbound \
   --restart unless-stopped \
+  --cap-drop ALL \
+  --cap-add NET_BIND_SERVICE \
+  --cap-add SETUID \
+  --cap-add SETGID \
+  --cap-add CHOWN \
+  --cap-add DAC_OVERRIDE \
   --security-opt no-new-privileges:true \
+  --tmpfs /tmp:noexec,nosuid,size=16m \
   -p 127.0.0.1:5335:53/tcp \
   -p 127.0.0.1:5335:53/udp \
   dgcosenza/unbound:latest
 ```
 
-Test recursive DNSSEC resolution:
+Test recursive DNSSEC validation:
 
 ```bash
 docker exec unbound drill -D @127.0.0.1 nlnetlabs.nl
 ```
 
-## Compose example
+### Hardened Docker Compose
 
-See [docker-compose.example.yml](docker-compose.example.yml) for a complete
-compose definition running Unbound on an internal bridge network with memory
-limits, `no-new-privileges:true`, and a `drill` healthcheck.
+See [`docker-compose.example.yml`](https://github.com/dgcosenza/unbound-docker/blob/main/docker-compose.example.yml) for a hardened compose example running on an internal bridge network with `cap_drop: [ALL]`, minimal `cap_add`, `no-new-privileges:true`, resource limits, and a `drill` healthcheck.
+
+---
 
 ## Configuration
 
 ### Ports
 
 | Port | Protocol | Purpose |
-|---|---|---|
-| `53` | TCP / UDP | DNS recursive / forwarding resolver |
+| --- | --- | --- |
+| `53` | TCP / UDP | Recursive / forwarding DNS resolver |
 
-Keep Unbound on a private internal bridge network behind a DNS frontend such as
-[dgcosenza/pihole](https://github.com/dgcosenza/pihole-docker), rather than
-exposing port `53` directly to untrusted networks.
+Keep Unbound on an internal Docker network behind a DNS frontend such as [`dgcosenza/pihole`](https://github.com/dgcosenza/pihole-docker).
 
-### Volumes and paths
+### Volumes and Paths
 
 | Path | Mode | Purpose |
-|---|---|---|
-| `/etc/unbound/unbound.conf` | read-only (optional) | Full custom Unbound configuration replacing the built-in defaults |
+| --- | --- | --- |
+| `/etc/unbound/unbound.conf` | read-only (optional) | Full custom Unbound configuration replacing built-in defaults |
 | `/etc/unbound/custom.conf.d/` | read-only (optional) | Drop-in `*.conf` snippets loaded via `include-toplevel` |
-| `/var/unbound/root.key` | writable (in container) | RFC 5011 DNSSEC root trust anchor initialized at build time and owned by `unbound:unbound` |
+| `/var/unbound/root.key` | writable | RFC 5011 DNSSEC root trust anchor owned by `unbound:unbound` (`101:102`) |
 | `/var/unbound/root.hints` | read-only | IANA root server hints refreshed on every daily build |
-| `/etc/ssl/certs/ca-certificates.crt` | read-only | Debian CA trust store for DNS-over-TLS (`tls-cert-bundle`) |
+| `/etc/ssl/certs/ca-certificates.crt` | read-only | Debian CA trust bundle for DNS-over-TLS (`tls-cert-bundle`) |
 
-### Environment variables
-
-Unbound is configured purely via `/etc/unbound/unbound.conf` and
-`/etc/unbound/custom.conf.d/*.conf`. Standard container variables are supported:
+### Environment Variables & UID/GID
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `TZ` | `UTC` | Timezone for log timestamps |
 
-### Extending access control for local networks
+Unbound starts briefly as root solely to bind privileged port `53` and read TLS bundles, then drops privileges to `unbound` (`uid=101`, `gid=102`).
 
-The default `/etc/unbound/unbound.conf` allows loopback (`127.0.0.0/8`, `::1/128`)
-and Docker bridge subnets (`172.16.0.0/12`, `fd00::/8`). To permit additional
-private ranges (for example, `192.0.2.0/24`), add a drop-in file under
-`/etc/unbound/custom.conf.d/lan.conf`:
-
-```text
-server:
-    access-control: 192.0.2.0/24 allow
-```
-
-### UID / GID
-
-Unbound starts as root only long enough to bind privileged port `53` and read
-TLS certificates, then drops privileges to the unprivileged `unbound` service
-account (`uid=101`, `gid=102`), matching `klutchell/unbound`.
+---
 
 ## Healthcheck
 
-```text
-drill -Q @127.0.0.1 nlnetlabs.nl
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD ["drill", "-Q", "@127.0.0.1", "nlnetlabs.nl"]
 ```
 
-The built-in healthcheck runs every 30 s (10 s timeout, 30 s start period, 3
-retries). Both `drill` and a `dig` symlink are shipped in `/usr/bin/`, so
-compose overrides calling `drill -Q @127.0.0.1 <domain>` work unmodified.
+Both `drill` and a `dig` symlink are shipped in `/usr/bin/`, ensuring compose healthcheck overrides work unmodified.
 
-## Upgrading and migrating from `klutchell/unbound`
+---
+
+## Upgrading and Migrating from `klutchell/unbound`
 
 1. Back up your mounted `unbound.conf` or `custom.conf.d/` directory.
-2. Replace `klutchell/unbound:latest` in your compose file with
-   `dgcosenza/unbound:<version>@sha256:<digest>`.
-3. Verify your existing configuration against the new image before swapping:
+2. Validate your existing config against the new image:
    ```bash
    docker run --rm -v ./unbound.conf:/etc/unbound/unbound.conf:ro \
      --entrypoint unbound-checkconf dgcosenza/unbound:latest
    ```
-4. Recreate the container (`docker compose up -d unbound`) and verify DNSSEC
-   resolution with `docker exec unbound drill -D @127.0.0.1 nlnetlabs.nl`.
+3. Replace `klutchell/unbound:latest` with `dgcosenza/unbound:<version>@sha256:<digest>` (or `ghcr.io/dgcosenza/unbound:<version>@sha256:<digest>`).
+4. Recreate the container (`docker compose up -d unbound`) and confirm `healthy` status and DNSSEC `ad` flag resolution.
 
-Rollback is immediate: restore the previous image reference in your compose
-file and run `docker compose up -d unbound`.
+---
+
+## Supply-Chain Verification
+
+Every published digest (multi-arch index and per-architecture manifests) on both Docker Hub and GHCR is keyless-signed with **Sigstore Cosign** (GitHub OIDC), attested with **SPDX** and **CycloneDX** SBOMs, and backed by **SLSA Build L3** provenance (`actions/attest-build-provenance`).
+
+### Verify image signature with Cosign
+
+```bash
+cosign verify \
+  --certificate-identity-regexp="^https://github\.com/dgcosenza/unbound-docker/\.github/workflows/daily\.yml@refs/heads/main$" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  ghcr.io/dgcosenza/unbound:latest
+
+# Or against Docker Hub (identical digest):
+cosign verify \
+  --certificate-identity-regexp="^https://github\.com/dgcosenza/unbound-docker/\.github/workflows/daily\.yml@refs/heads/main$" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  dgcosenza/unbound:latest
+```
+
+### Verify SPDX / CycloneDX SBOM attestations
+
+```bash
+cosign verify-attestation \
+  --type spdxjson \
+  --certificate-identity-regexp="^https://github\.com/dgcosenza/unbound-docker/\.github/workflows/daily\.yml@refs/heads/main$" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  ghcr.io/dgcosenza/unbound@sha256:<arch-digest>
+```
+
+### Verify SLSA Build Provenance
+
+```bash
+gh attestation verify oci://ghcr.io/dgcosenza/unbound:latest --owner dgcosenza
+```
+
+---
 
 ## Security
 
-* **Base OS:** `debian:trixie-slim`, fully upgraded (`apt-get upgrade`) on
-  every build with `--no-install-recommends` and cleaned APT lists.
-* **Verified upstream sources:** Unbound and ldns tarballs are fetched directly
-  from NLnet Labs over HTTPS and checked against their official SHA-256 digests
-  before compiling.
-* **DNSSEC by default:** `root.hints` and `root.key` are initialized at build
-  time via `unbound-anchor` with RFC 5011 automated tracking enabled.
-* **Privilege drop & PID 1:** `tini` handles signal forwarding and zombie
-  reaping as PID 1; Unbound drops privileges to `unbound` (`101:102`) after
-  binding port 53 and supports `no-new-privileges:true`.
-* **Scan policy:** every build must pass **Trivy** (`--ignore-unfixed`,
-  `CRITICAL,HIGH`) and **Grype** (`--only-fixed`, severity `high`) with **0
-  fixable CRITICAL or HIGH** vulnerabilities. Full scan reports and a Syft SPDX
-  SBOM are archived for 90 days; Trivy SARIF is uploaded to GitHub code
-  scanning.
-* **Current status:** see the CI badge above and the "Current versions" table.
-  Any unfixed upstream findings with no available patch are automatically listed
-  in "Current versions".
+- **Preflight gates:** Every push and PR runs **Hadolint** (blocking on warning+), **Gitleaks** secret scanning across git history, and **public-content/attribution/license** checks.
+- **Verified upstream source:** Unbound and ldns tarballs are fetched over HTTPS from NLnet Labs and verified against their official SHA-256 digests prior to compilation.
+- **Vulnerability & efficiency gates:** Each architecture generates **Syft** SPDX + CycloneDX SBOMs, passes a strict **Dive** efficiency gate (`>= 95%`, `<= 5%` wasted), and must pass **Trivy** (table, JSON, SARIF to Code Scanning, blocking `--ignore-unfixed`) and **Grype** scanning the SPDX SBOM (`--only-fixed --fail-on high`) with **0 fixable Critical/High** vulnerabilities.
+- **Dependency automation:** Renovate (`renovate.json`) pins base image digests and GitHub Action commit SHAs; Dependabot security alerts and OpenSSF Scorecard monitoring are enabled.
+- See [`SECURITY.md`](https://github.com/dgcosenza/unbound-docker/blob/main/SECURITY.md) for vulnerability reporting.
 
-## Building locally
+---
+
+## Build Locally
 
 ```bash
 git clone https://github.com/dgcosenza/unbound-docker.git
 cd unbound-docker
-docker build -t dgcosenza/unbound:dev .
-./tests/smoke.sh dgcosenza/unbound:dev
+
+docker buildx build \
+  --platform linux/amd64 \
+  --load \
+  --build-arg IMAGE_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" \
+  -t dgcosenza/unbound:local \
+  .
+
+./tests/smoke.sh dgcosenza/unbound:local
 ```
 
-Build arguments (all have documented defaults in `Dockerfile`):
-
-| Argument | Default | Purpose |
-|---|---|---|
-| `DEBIAN_VERSION` | `trixie-slim` | Debian 13 base tag |
-| `UNBOUND_VERSION` / `UNBOUND_SHA256` | tracked release | NLnet Labs Unbound tarball version and SHA-256 |
-| `LDNS_VERSION` / `LDNS_SHA256` | tracked release | NLnet Labs ldns tarball version and SHA-256 |
+| Build Arg | Default | Purpose |
+| --- | --- | --- |
+| `DEBIAN_BASE` | `debian:trixie-slim@sha256:...` | Digest-pinned Debian 13 base image (refreshed daily by CI) |
+| `UNBOUND_VERSION` / `UNBOUND_SHA256` | `1.26.2` / pinned | NLnet Labs Unbound tarball version and SHA-256 |
+| `LDNS_VERSION` / `LDNS_SHA256` | `1.9.2` / pinned | NLnet Labs ldns tarball version and SHA-256 |
 | `UNBOUND_UID` / `UNBOUND_GID` | `101` / `102` | Unprivileged `unbound` user/group IDs |
-| `IMAGE_CREATED`, `IMAGE_REVISION`, `IMAGE_SOURCE` | empty / repo | OCI image metadata |
 
-## Update policy
+---
 
-A GitHub Actions workflow (`.github/workflows/daily.yml`) runs **daily** (and on
-every push to `main`, on pull requests, and on demand via `workflow_dispatch`),
-gated first by `.github/workflows/public-check.yml`:
+## Update Policy
 
-1. **Upstream check:** resolves the latest NLnet Labs Unbound release via the
-   authenticated GitHub API (`GH_TOKEN`), fetches official SHA-256 digests for
-   Unbound and ldns, diffs against `versions.json`, and captures upstream
-   release notes for newly published versions.
-2. **Clean rebuild:** rebuilds `linux/amd64` from `debian:trixie-slim` with
-   `apt-get upgrade`, fresh IANA root hints, a fresh DNSSEC root anchor, and
-   `--no-cache` on scheduled runs.
-3. **Vulnerability fix and gate:** scans the candidate image with **Trivy**
-   (table, JSON, SARIF to GitHub code scanning) and **Grype**; fails on any
-   fixable **CRITICAL** or **HIGH** vulnerability, archives reports and an SPDX
-   SBOM (Syft) for 90 days, and diffs findings against the prior build.
-4. **Smoke test:** starts the container, waits for `healthy`, verifies privilege
-   drop to uid `101`, confirms recursive resolution and DNSSEC validation
-   (including `SERVFAIL` for bogus signatures), and verifies negative failure
-   cases.
-5. **Publish:** on non-PR runs with Docker Hub credentials configured, pushes
-   `latest`, `<version>`, `<version>-<YYYYMMDD>` (immutable), and `sha-<short>`,
-   recording the published digest.
-6. **Automated documentation sync:** when versions, base OS, digest, or CVE
-   status change, commits updated `versions.json`, the README "Current
-   versions" block, and a dated `CHANGELOG.md` entry (`[skip ci]`), then syncs
-   the README and short description to Docker Hub.
-7. **Alerting:** on failure of any job on a scheduled or `main` run, opens or
-   updates a single GitHub issue labeled `ci-failure` with the failing job and
-   run link, and closes it automatically on the next green run.
+[`.github/workflows/daily.yml`](https://github.com/dgcosenza/unbound-docker/blob/main/.github/workflows/daily.yml) runs automatically every day at **05:20 UTC**, on pushes to `main`, on pull requests (verification only), and via `workflow_dispatch`:
 
-## Design decisions
+1. **Preflight & upstream check:** Runs public-content checks, **Hadolint**, and **Gitleaks**; resolves the latest NLnet Labs Unbound and ldns releases + official SHA-256 digests and latest `debian:trixie-slim` digest; diffs against `versions.json` and emits `upstream-changes.md`.
+2. **Multi-arch no-cache rebuild:** Compiles Unbound and ldns natively on `linux/amd64` and `linux/arm64` runners with `--no-cache` on schedule, fresh IANA root hints, fresh DNSSEC root anchor, and full Debian 13 `apt-get upgrade`.
+3. **Smoke, Dive & vulnerability gates:** Runs [`tests/smoke.sh`](https://github.com/dgcosenza/unbound-docker/blob/main/tests/smoke.sh) natively on both architectures (minimal capabilities, uid `101` drop, DNSSEC `ad` + bogus `SERVFAIL`), enforces the strict **Dive** efficiency gate (`>= 95%`, `<= 5%` wasted), generates **Syft** SPDX + CycloneDX SBOMs, and gates publication on **0 fixable Critical/High** in both **Trivy** and **Grype** (SBOM scan).
+4. **Dual-registry publish & signing:** Assembles the multi-arch OCI index on **GHCR** (`ghcr.io/dgcosenza/unbound`) and mirrors the identical digest to **Docker Hub** (`dgcosenza/unbound`) with tags `latest`, `<version>`, `<version>-<YYYYMMDD>`, and `sha-<short>`; keyless-signs digests and attaches SPDX/CycloneDX SBOM attestations via **Cosign** OIDC; emits **SLSA Build L3** provenance; and publishes a signed **GitHub Release**.
+5. **Automated documentation sync:** Commits updated `versions.json`, the README `Current Versions` block, and a dated `CHANGELOG.md` entry via `github-actions[bot]` (`[skip ci]`), then syncs the Docker Hub overview and short description.
+6. **Failure alerting:** Opens or updates a single GitHub issue labeled `ci-failure` on any `main` or scheduled failure, and closes it automatically on the next green run.
 
-* **Debian 13 slim instead of Alpine/scratch.** `klutchell/unbound` copies
-  musl-linked Alpine libraries into `scratch`. Building on `debian:trixie-slim`
-  gives uniform glibc/OpenSSL 3 security updates via `apt-get upgrade`, full
-  Debian CA bundle management, clean scanner visibility (dpkg metadata in Trivy,
-  Grype, and Syft SBOMs), and consistent troubleshooting across containers.
-* **Compiled from official NLnet Labs source.** Compiling Unbound and ldns
-  directly from official verified tarballs delivers the newest upstream
-  releases and exact compile-time features (`dnscrypt`, `subnet`, `cachedb`,
-  `tfo`, `libevent`, `nghttp2`) without waiting for distro backports.
-* **`tini` as PID 1.** Provides clean `SIGTERM`/`SIGINT`/`SIGHUP` forwarding
-  and zombie reaping without interfering with Unbound's own privilege drop or
-  CLI arguments.
-* **Bounded default cache sizes.** Default `msg-cache-size: 48m` and
-  `rrset-cache-size: 96m` prevent unbounded memory growth inside memory-limited
-  containers.
+---
+
+## Design Decisions
+
+- **Debian 13 (`trixie-slim`) instead of Alpine/scratch copies:** Provides uniform glibc/OpenSSL 3 security updates, standard Debian CA trust management, and complete dpkg metadata for Trivy, Grype, and Syft SBOMs.
+- **Two-layer zero-waste runtime layout:** Upgrading Debian 13 inside an `os-base` stage and assembling the final image with cleanly separated OS and compiled-binary layers eliminates overwritten base-layer files so Dive remains at ~100% efficiency and ~0% wasted space across daily security rebuilds.
+- **`tini` as PID 1:** Ensures clean signal forwarding and zombie reaping alongside Unbound's own privilege drop.
+- **Hadolint `DL3008` ignore:** Daily `--no-cache` security rebuilds intentionally pull the newest Debian 13 security updates via `apt-get` rather than pinning stale package versions.
+
+---
 
 ## License
 
-The packaging, scripts, workflow, and documentation in this repository are
-licensed under the **MIT License** (see [LICENSE](LICENSE)). NLnet Labs Unbound
-and ldns are licensed under the **3-Clause BSD License** (see
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
+This repository follows a clear packaging-vs-upstream license split:
+
+- **Container packaging, default configuration, CI workflows, scripts, and documentation (`packaging: MIT`):** Licensed under the [MIT License](https://github.com/dgcosenza/unbound-docker/blob/main/LICENSE) — copyright **Daniel G. Cosenza from FNX Labs**.
+- **Bundled upstream software — NLnet Labs Unbound & ldns (`upstream: BSD-3-Clause`):** Copyright NLnet Labs and contributors — licensed under the [3-Clause BSD License](https://github.com/NLnetLabs/unbound/blob/master/LICENSE).
+
+Full notices are preserved inside the image (`/usr/share/doc/unbound-notices/`) and in [`THIRD-PARTY-NOTICES.md`](https://github.com/dgcosenza/unbound-docker/blob/main/THIRD-PARTY-NOTICES.md).
+
+---
 
 ## Credits
 
-* [NLnet Labs Unbound](https://github.com/NLnetLabs/unbound) — validating,
-  recursive, caching DNS resolver
-* [NLnet Labs ldns](https://nlnetlabs.nl/projects/ldns/about/) — DNS library
-  and `drill` tool
-* [klutchell/unbound-docker](https://github.com/klutchell/unbound-docker) —
-  path and feature conventions preserved for drop-in compatibility
-* Container packaging, CI, and documentation: maintained by Daniel G. Cosenza from FNX Labs ([dgcosenza](https://github.com/dgcosenza))
+- [NLnet Labs Unbound](https://github.com/NLnetLabs/unbound) and [NLnet Labs ldns](https://nlnetlabs.nl/projects/ldns/about/)
+- [klutchell/unbound-docker](https://github.com/klutchell/unbound-docker) — path and feature conventions preserved for drop-in compatibility
+- Container packaging, CI, and documentation: maintained by **Daniel G. Cosenza from FNX Labs** ([dgcosenza](https://github.com/dgcosenza))

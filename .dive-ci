@@ -1,0 +1,4 @@
+# Strict efficiency gate enforced across both linux/amd64 and linux/arm64.
+rules:
+  lowestEfficiency: 0.95
+  highestUserWastedPercent: 0.05

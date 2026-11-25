@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Smoke test for dgcosenza/unbound.
 #
-# Verifies container health, privilege drop to the unprivileged `unbound` user,
-# recursive DNS resolution, DNSSEC validation (positive + bogus SERVFAIL),
-# custom config mount compatibility, and negative healthcheck failure.
+# Verifies container health under minimal Linux capabilities, privilege drop to
+# the unprivileged `unbound` user (uid 101), recursive DNS resolution, DNSSEC
+# validation (positive + bogus SERVFAIL), and negative healthcheck failure.
 #
 # Usage: tests/smoke.sh [image]
 #        IMAGE=dgcosenza/unbound:latest tests/smoke.sh
@@ -18,7 +18,14 @@ cleanup() {
 trap cleanup EXIT
 
 docker run -d --name "$NAME" \
+  --cap-drop ALL \
+  --cap-add NET_BIND_SERVICE \
+  --cap-add SETUID \
+  --cap-add SETGID \
+  --cap-add CHOWN \
+  --cap-add DAC_OVERRIDE \
   --security-opt no-new-privileges:true \
+  --tmpfs /tmp:noexec,nosuid,size=16m \
   "$IMAGE"
 
 echo "== waiting for healthcheck"
@@ -57,17 +64,12 @@ docker exec "$NAME" unbound -V | head -n 4
 docker exec "$NAME" unbound-checkconf
 
 echo "== negative test: invalid configuration must fail unbound-checkconf"
-if docker run --rm --entrypoint unbound-checkconf "$IMAGE" /dev/null >/dev/null 2>&1; then
-  # /dev/null is valid empty conf; test with an invalid directive instead
-  if docker run --rm --entrypoint sh "$IMAGE" -c 'printf "server:\n  nonexistent-directive: yes\n" > /tmp/bad.conf && unbound-checkconf /tmp/bad.conf' >/dev/null 2>&1; then
-    echo "ERROR: unbound-checkconf accepted invalid config" >&2
-    exit 1
-  fi
+if docker run --rm --entrypoint sh "$IMAGE" -c 'printf "server:\n  nonexistent-directive: yes\n" > /tmp/bad.conf && unbound-checkconf /tmp/bad.conf' >/dev/null 2>&1; then
+  echo "ERROR: unbound-checkconf accepted invalid config" >&2
+  exit 1
 fi
 
 echo "== negative test: healthcheck fails when unbound stops"
-docker exec "$NAME" sh -c 'for p in /proc/[0-9]*/comm; do [ "$(cat "$p" 2>/dev/null)" = "unbound" ] && kill -9 "${p#/proc/}" 2>/dev/null || true; done' || true
-# Stop cleanly via signal to PID 1 if proc comm kill needed basename
 docker stop -t 2 "$NAME" >/dev/null 2>&1 || true
 if docker exec "$NAME" drill -Q @127.0.0.1 nlnetlabs.nl >/dev/null 2>&1; then
   echo "ERROR: healthcheck still succeeded after unbound stopped" >&2

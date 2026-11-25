@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "docker:pinDigests",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "packageRules": [
+    {
+      "description": "Group minor, patch, and digest updates and automerge only after CI passes",
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "minor, patch, and digest updates",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    }
+  ],
+  "schedule": ["before 06:00 on monday"]
+}

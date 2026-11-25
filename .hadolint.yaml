@@ -1,0 +1,4 @@
+# Daily --no-cache security rebuilds intentionally pull latest Debian 13 (trixie)
+# security updates via apt-get rather than pinning stale distro patch versions.
+ignored:
+  - DL3008
