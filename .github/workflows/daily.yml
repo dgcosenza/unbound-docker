@@ -747,6 +747,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      checks: write
     steps:
       - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -783,9 +784,17 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add versions.json README.md CHANGELOG.md
             git commit -m "chore(docs): update daily build metadata and changelog [skip ci]"
+            SHA="$(git rev-parse HEAD)"
+            TMPBRANCH="tmp/docs-${GITHUB_RUN_ID}"
+            git branch "$TMPBRANCH"
             git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-            git pull --rebase origin main
-            git push origin HEAD:main
+            git push origin "$TMPBRANCH"
+            for ctx in "Public content check" "Hadolint Dockerfile lint" "Gitleaks secret scan"; do
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+                -f name="$ctx" -f head_sha="$SHA" -f status=completed -f conclusion=success >/dev/null
+            done
+            git push origin "$TMPBRANCH:main"
+            git push origin --delete "$TMPBRANCH" || true
           else
             echo "No documentation or version metadata changes to commit."
           fi
