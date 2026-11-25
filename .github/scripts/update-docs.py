@@ -55,7 +55,7 @@ def build_readme_block(meta: dict, bullets: list[str]) -> str:
     sizes = meta.get("sizes_mb") or {}
     if sizes:
         size_str = ", ".join(f"{k}: {v} MB" for k, v in sizes.items())
-        rows.append(f"| Uncompressed size (per arch) | `{size_str}` |")
+        rows.append(f"| Compressed size (per arch) | `{size_str}` |")
     rows.append(f"| Last verified build (UTC) | `{meta.get('build_date', 'unknown')}` |")
     digest = meta.get("image_digest") or ""
     if digest:

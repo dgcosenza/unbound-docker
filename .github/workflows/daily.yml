@@ -523,10 +523,18 @@ jobs:
             test "${HUB_DIGEST}" = "${INDEX_DIGEST}"
           fi
 
+          AMD64_BYTES="$(crane manifest "ghcr.io/${IMAGE_NAME}@${DIG_AMD64}" | jq '[.layers[].size] | add')"
+          ARM64_BYTES="$(crane manifest "ghcr.io/${IMAGE_NAME}@${DIG_ARM64}" | jq '[.layers[].size] | add')"
+          AMD64_MB="$(python3 -c "print(f'{int(${AMD64_BYTES})/1000000:.1f}')")"
+          ARM64_MB="$(python3 -c "print(f'{int(${ARM64_BYTES})/1000000:.1f}')")"
+          echo "Compressed OCI layer size: amd64=${AMD64_MB} MB (${AMD64_BYTES} B), arm64=${ARM64_MB} MB (${ARM64_BYTES} B)"
+
           {
             echo "index_digest=${INDEX_DIGEST}"
             echo "amd64_digest=${DIG_AMD64}"
             echo "arm64_digest=${DIG_ARM64}"
+            echo "amd64_mb=${AMD64_MB}"
+            echo "arm64_mb=${ARM64_MB}"
             echo "date_tag=${DATE_TAG}"
             echo "sha_tag=${SHA_TAG}"
           } >> "$GITHUB_OUTPUT"
@@ -570,15 +578,16 @@ jobs:
           subject-digest: ${{ steps.index.outputs.index_digest }}
           push-to-registry: true
 
-      - name: Publish signed GitHub Release with SBOMs and checksums
+      - name: Prepare release assets, checksums, and Cosign blob signature
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.index.outputs.date_tag }}
           VER: ${{ needs.resolve.outputs.upstream_version }}
           INDEX_DIGEST: ${{ steps.index.outputs.index_digest }}
           DIG_AMD64: ${{ steps.index.outputs.amd64_digest }}
           DIG_ARM64: ${{ steps.index.outputs.arm64_digest }}
+          AMD64_MB: ${{ steps.index.outputs.amd64_mb }}
+          ARM64_MB: ${{ steps.index.outputs.arm64_mb }}
           HUB_ENABLED: ${{ steps.hub_auth.outputs.enabled }}
         run: |
           set -euo pipefail
@@ -588,10 +597,7 @@ jobs:
           cp .ci-in/arch-artifacts-arm64/sbom-arm64.spdx.json .rel/
           cp .ci-in/arch-artifacts-arm64/sbom-arm64.cdx.json .rel/
 
-          AMD64_MB="$(jq -r '.size_mb' .ci-in/arch-artifacts-amd64/arch-meta-amd64.json)"
-          ARM64_MB="$(jq -r '.size_mb' .ci-in/arch-artifacts-arm64/arch-meta-arm64.json)"
           DEBIAN_VER="$(jq -r '.debian_version' .ci-in/arch-artifacts-amd64/arch-meta-amd64.json)"
-
           (
             cd .rel
             {
@@ -630,17 +636,33 @@ jobs:
           \`\`\`
           EOF
 
+      - name: Attest SLSA Build L3 provenance (release checksums)
+        id: attest_release
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: '.rel/checksums.txt'
+
+      - name: Publish signed GitHub Release with SBOMs, checksums, and SLSA provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.index.outputs.date_tag }}
+          VER: ${{ needs.resolve.outputs.upstream_version }}
+          BUNDLE_PATH: ${{ steps.attest_release.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp "$BUNDLE_PATH" .rel/checksums.txt.intoto.jsonl
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --title "NLnet Labs Unbound ${VER} (${TAG})" --notes-file .rel/notes.md
             gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber \
-              .rel/checksums.txt .rel/checksums.txt.sigstore.json \
+              .rel/checksums.txt .rel/checksums.txt.sigstore.json .rel/checksums.txt.intoto.jsonl \
               .rel/sbom-amd64.spdx.json .rel/sbom-amd64.cdx.json \
               .rel/sbom-arm64.spdx.json .rel/sbom-arm64.cdx.json
           else
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
               --title "NLnet Labs Unbound ${VER} (${TAG})" \
               --notes-file .rel/notes.md \
-              .rel/checksums.txt .rel/checksums.txt.sigstore.json \
+              .rel/checksums.txt .rel/checksums.txt.sigstore.json .rel/checksums.txt.intoto.jsonl \
               .rel/sbom-amd64.spdx.json .rel/sbom-amd64.cdx.json \
               .rel/sbom-arm64.spdx.json .rel/sbom-arm64.cdx.json
           fi
@@ -649,12 +671,12 @@ jobs:
         shell: bash
         env:
           INDEX_DIGEST: ${{ steps.index.outputs.index_digest }}
+          AMD64_MB: ${{ steps.index.outputs.amd64_mb }}
+          ARM64_MB: ${{ steps.index.outputs.arm64_mb }}
           HUB_ENABLED: ${{ steps.hub_auth.outputs.enabled }}
         run: |
           set -euo pipefail
           DEBIAN_VER="$(jq -r '.debian_version' .ci-in/arch-artifacts-amd64/arch-meta-amd64.json)"
-          AMD64_MB="$(jq -r '.size_mb' .ci-in/arch-artifacts-amd64/arch-meta-amd64.json)"
-          ARM64_MB="$(jq -r '.size_mb' .ci-in/arch-artifacts-arm64/arch-meta-arm64.json)"
           HUB_REF=""
           [ "$HUB_ENABLED" = "true" ] && HUB_REF="${IMAGE_NAME}@${INDEX_DIGEST}"
           GHCR_REF="ghcr.io/${IMAGE_NAME}@${INDEX_DIGEST}"
