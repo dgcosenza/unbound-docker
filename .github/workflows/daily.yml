@@ -793,7 +793,11 @@ jobs:
               gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs" \
                 -f name="$ctx" -f head_sha="$SHA" -f status=completed -f conclusion=success >/dev/null
             done
-            git push origin "$TMPBRANCH:main"
+            for _attempt in 1 2 3; do
+              git push origin "$TMPBRANCH:main" && break
+              echo "push attempt $_attempt failed; retrying..." >&2
+              sleep 5
+            done
             git push origin --delete "$TMPBRANCH" || true
           else
             echo "No documentation or version metadata changes to commit."
