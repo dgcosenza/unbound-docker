@@ -9,3 +9,6 @@ cve-diff.json
 .ci-meta/
 *.log
 .DS_Store
+
+__pycache__/
+*.pyc
