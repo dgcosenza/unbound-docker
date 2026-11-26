@@ -7,6 +7,7 @@
 [![SLSA Level 3](https://img.shields.io/badge/SLSA-Level%203-brightgreen.svg)](#supply-chain-verification)
 [![Architectures](https://img.shields.io/badge/arch-amd64%20%7C%20arm64-informational.svg)](#supported-architectures)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/dgcosenza/unbound-docker/badge)](https://scorecard.dev/viewer/?uri=github.com/dgcosenza/unbound-docker)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/17175/badge)](https://www.bestpractices.dev/projects/17175)
 [![Docker Pulls](https://img.shields.io/docker/pulls/dgcosenza/unbound)](https://hub.docker.com/r/dgcosenza/unbound)
 [![Docker Image Size](https://img.shields.io/docker/image-size/dgcosenza/unbound/latest)](https://hub.docker.com/r/dgcosenza/unbound)
 [![Latest Release](https://img.shields.io/github/v/release/dgcosenza/unbound-docker?label=version)](https://github.com/dgcosenza/unbound-docker/releases)
