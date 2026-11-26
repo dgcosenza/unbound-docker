@@ -26,7 +26,7 @@ A source-built, multi-arch, continuously rebuilt **Debian 13 (`trixie-slim`)** c
 
 - **Drop-in replacement for `klutchell/unbound`:** Preserves `/etc/unbound/unbound.conf`, `/etc/unbound/custom.conf.d/*.conf`, `/var/unbound/root.key`, `unbound` (`101:102`) privilege drop, `drill` (and `dig` symlink), and full compiled feature parity (OpenSSL 3, libevent, DNSCrypt, EDNS client subnet, cachedb, nghttp2, TCP Fast Open).
 - **Minimal-privilege execution:** Verified under `--cap-drop ALL` with only the minimal capabilities required to bind port `53` and drop privileges to uid `101` under `tini`.
-- **Hardened supply chain:** Hadolint + Gitleaks preflight, native multi-arch DNSSEC smoke tests, strict Dive efficiency gate (`>= 95%`, `<= 5%` wasted), Syft SPDX + CycloneDX SBOMs, Trivy + Grype (SBOM) zero-fixable High/Critical gates, Cosign keyless OIDC signatures & SBOM attestations, SLSA Build L3 provenance, dual-registry publishing, and signed GitHub Releases.
+- **Hardened supply chain:** Hadolint + Gitleaks preflight, native multi-arch DNSSEC smoke tests, strict Dive efficiency gate (`>= 95%`, `<= 5%` wasted), Syft SPDX + CycloneDX SBOMs, Trivy + Grype (SBOM) zero-fixable all-severity gates, Cosign keyless OIDC signatures & SBOM attestations, SLSA Build L3 provenance, dual-registry publishing, and signed GitHub Releases.
 
 ---
 
@@ -208,7 +208,7 @@ gh attestation verify oci://ghcr.io/dgcosenza/unbound:latest --owner dgcosenza
 
 - **Preflight gates:** Every push and PR runs **Hadolint** (blocking on warning+), **Gitleaks** secret scanning across git history, and **public-content/attribution/license** checks.
 - **Verified upstream source:** Unbound and ldns tarballs are fetched over HTTPS from NLnet Labs and verified against their official SHA-256 digests prior to compilation.
-- **Vulnerability & efficiency gates (all severities with a fix):** Each architecture generates **Syft** SPDX + CycloneDX SBOMs, passes a strict **Dive** efficiency gate (`>= 95%`, `<= 5%` wasted), and must pass **Trivy** (table, JSON, SARIF to Code Scanning, blocking `--ignore-unfixed`) and **Grype** scanning the SPDX SBOM (`--only-fixed --fail-on negligible`) with **0 fixable findings of any severity** vulnerabilities.
+- **Vulnerability & efficiency gates (all severities with a fix):** Each architecture generates **Syft** SPDX + CycloneDX SBOMs, passes a strict **Dive** efficiency gate (`>= 95%`, `<= 5%` wasted), and must pass **Trivy** (table, JSON, SARIF to Code Scanning, blocking `--ignore-unfixed`) and **Grype** scanning the SPDX SBOM (`--only-fixed --fail-on negligible`) with **0 fixable vulnerabilities of any severity**.
 - **Dependency automation:** Renovate (`renovate.json`) pins base image digests and GitHub Action commit SHAs; Dependabot security alerts and OpenSSF Scorecard monitoring are enabled.
 - See [`SECURITY.md`](https://github.com/dgcosenza/unbound-docker/blob/main/SECURITY.md) for vulnerability reporting.
 
