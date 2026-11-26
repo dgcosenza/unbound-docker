@@ -44,7 +44,7 @@ A source-built, multi-arch, continuously rebuilt **Debian 13 (`trixie-slim`)** c
 | Published multi-arch digest | `dgcosenza/unbound@sha256:7c7b66308ad9c59a414577bfe2fdeda5e6fc6896a5c6d61870ecc1a06d67ef1b` |
 | GHCR mirror | `ghcr.io/dgcosenza/unbound@sha256:7c7b66308ad9c59a414577bfe2fdeda5e6fc6896a5c6d61870ecc1a06d67ef1b` |
 | Supply chain | Cosign OIDC signed + SPDX & CycloneDX SBOM attestations + SLSA Build L3 provenance |
-| Security gate (Trivy + Grype on SBOM) | **0 fixable Critical/High** (17 upstream-unfixed) |
+| Security gate (Trivy + Grype on SBOM) | **0 fixable findings of any severity** (17 upstream-unfixed) |
 
 Currently tracked upstream-unfixed findings (no fix released): `CVE-2025-69720`, `CVE-2026-107494`, `CVE-2026-113351`, `CVE-2026-115506`, `CVE-2026-117610`, `CVE-2026-118370`, `CVE-2026-119373`, `CVE-2026-119374`, `CVE-2026-119379`, `CVE-2026-124709` (+7 more in CI artifacts).
 <!-- versions:end -->
