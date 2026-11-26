@@ -38,10 +38,29 @@ all of them green before it can be merged into `main`:
 - **Hadolint** — Dockerfile lint (blocking on warnings and above);
 - **Gitleaks** — secret scanning across the full history.
 
-You can run the content check locally with `.github/scripts/public-check.sh`.
-The image build, vulnerability scans, and smoke tests run in continuous
-integration; developer workstations do not need a local Docker daemon for
-those stages.
+You can run the content check locally with `.github/scripts/public-check.sh`
+(no Docker daemon required). The image build, vulnerability scans, and smoke
+tests run in continuous integration on every daily build; see Tests below
+for how to run the smoke suite when a Docker daemon is available.
+
+
+## Tests
+
+The automated test suite is `tests/smoke.sh`. It starts the image under test,
+waits until Docker reports `healthy`, and exercises service-specific behaviour.
+Continuous integration runs the suite on every daily build:
+
+    ./tests/smoke.sh "<image-reference>"
+
+The first argument is the image reference to test. Continuous integration
+passes the just-built `ci-candidate` tag; locally, build or pull an image
+and pass that reference. A Docker daemon is required for this suite.
+Additional scripts under `tests/` (when present) are part of the same
+suite and should be kept current.
+
+As major new functionality is added to the image or its packaging, tests
+for that functionality must be added to this automated suite. Pull requests
+that change runtime behaviour should include the corresponding test updates.
 
 ## Commit and pull request style
 
