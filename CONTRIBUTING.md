@@ -40,8 +40,8 @@ all of them green before it can be merged into `main`:
 
 You can run the content check locally with `.github/scripts/public-check.sh`.
 The image build, vulnerability scans, and smoke tests run in continuous
-integration; the Mac and other developer machines do not need a local Docker
-daemon for those stages.
+integration; developer workstations do not need a local Docker daemon for
+those stages.
 
 ## Commit and pull request style
 

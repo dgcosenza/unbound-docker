@@ -23,10 +23,10 @@ Unbound or ldns itself should also be reported upstream to NLnet Labs via
 
 ## Scanning and gates
 
-* **Trivy:** the build fails on any fixable **CRITICAL** or **HIGH** finding
+* **Trivy:** the build fails on any fixable vulnerability of **any severity**
   across OS packages and libraries. Full reports are attached as 90-day
   artifacts and SARIF results are uploaded to GitHub code scanning.
-* **Grype:** runs as a blocking gate (`--only-fixed`, severity high/critical),
+* **Grype:** runs as a blocking gate (`--only-fixed --fail-on negligible`, all severities),
   with reports archived for 90 days.
 * **SBOM:** an SPDX JSON software bill of materials is generated with Syft and
   archived for 90 days.
