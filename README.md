@@ -44,7 +44,7 @@ A source-built, multi-arch, continuously rebuilt **Debian 13 (`trixie-slim`)** c
 | Published multi-arch digest | `dgcosenza/unbound@sha256:03469f75babc7f9733d8df13fca59eb75caa8e845a1aec3f5043382f273d01d3` |
 | GHCR mirror | `ghcr.io/dgcosenza/unbound@sha256:03469f75babc7f9733d8df13fca59eb75caa8e845a1aec3f5043382f273d01d3` |
 | Supply chain | Cosign OIDC signed + SPDX & CycloneDX SBOM attestations + SLSA Build L3 provenance |
-| Security gate (Trivy + Grype on SBOM) | **0 fixable Critical/High** (17 upstream-unfixed) |
+| Security gate (Trivy + Grype on SBOM) | **0 fixable findings of any severity** (17 upstream-unfixed) |
 
 Currently tracked upstream-unfixed findings (no fix released): `CVE-2025-69720`, `CVE-2026-107494`, `CVE-2026-113351`, `CVE-2026-115506`, `CVE-2026-117610`, `CVE-2026-118370`, `CVE-2026-119373`, `CVE-2026-119374`, `CVE-2026-119379`, `CVE-2026-124709` (+7 more in CI artifacts).
 <!-- versions:end -->
@@ -208,7 +208,7 @@ gh attestation verify oci://ghcr.io/dgcosenza/unbound:latest --owner dgcosenza
 
 - **Preflight gates:** Every push and PR runs **Hadolint** (blocking on warning+), **Gitleaks** secret scanning across git history, and **public-content/attribution/license** checks.
 - **Verified upstream source:** Unbound and ldns tarballs are fetched over HTTPS from NLnet Labs and verified against their official SHA-256 digests prior to compilation.
-- **Vulnerability & efficiency gates:** Each architecture generates **Syft** SPDX + CycloneDX SBOMs, passes a strict **Dive** efficiency gate (`>= 95%`, `<= 5%` wasted), and must pass **Trivy** (table, JSON, SARIF to Code Scanning, blocking `--ignore-unfixed`) and **Grype** scanning the SPDX SBOM (`--only-fixed --fail-on high`) with **0 fixable Critical/High** vulnerabilities.
+- **Vulnerability & efficiency gates (all severities with a fix):** Each architecture generates **Syft** SPDX + CycloneDX SBOMs, passes a strict **Dive** efficiency gate (`>= 95%`, `<= 5%` wasted), and must pass **Trivy** (table, JSON, SARIF to Code Scanning, blocking `--ignore-unfixed`) and **Grype** scanning the SPDX SBOM (`--only-fixed --fail-on negligible`) with **0 fixable findings of any severity** vulnerabilities.
 - **Dependency automation:** Renovate (`renovate.json`) pins base image digests and GitHub Action commit SHAs; Dependabot security alerts and OpenSSF Scorecard monitoring are enabled.
 - See [`SECURITY.md`](https://github.com/dgcosenza/unbound-docker/blob/main/SECURITY.md) for vulnerability reporting.
 
@@ -246,7 +246,7 @@ docker buildx build \
 
 1. **Preflight & upstream check:** Runs public-content checks, **Hadolint**, and **Gitleaks**; resolves the latest NLnet Labs Unbound and ldns releases + official SHA-256 digests and latest `debian:trixie-slim` digest; diffs against `versions.json` and emits `upstream-changes.md`.
 2. **Multi-arch no-cache rebuild:** Compiles Unbound and ldns natively on `linux/amd64` and `linux/arm64` runners with `--no-cache` on schedule, fresh IANA root hints, fresh DNSSEC root anchor, and full Debian 13 `apt-get upgrade`.
-3. **Smoke, Dive & vulnerability gates:** Runs [`tests/smoke.sh`](https://github.com/dgcosenza/unbound-docker/blob/main/tests/smoke.sh) natively on both architectures (minimal capabilities, uid `101` drop, DNSSEC `ad` + bogus `SERVFAIL`), enforces the strict **Dive** efficiency gate (`>= 95%`, `<= 5%` wasted), generates **Syft** SPDX + CycloneDX SBOMs, and gates publication on **0 fixable Critical/High** in both **Trivy** and **Grype** (SBOM scan).
+3. **Smoke, Dive & vulnerability gates:** Runs [`tests/smoke.sh`](https://github.com/dgcosenza/unbound-docker/blob/main/tests/smoke.sh) natively on both architectures (minimal capabilities, uid `101` drop, DNSSEC `ad` + bogus `SERVFAIL`), enforces the strict **Dive** efficiency gate (`>= 95%`, `<= 5%` wasted), generates **Syft** SPDX + CycloneDX SBOMs, and gates publication on **0 fixable findings of any severity** in both **Trivy** and **Grype** (SBOM scan).
 4. **Dual-registry publish & signing:** Assembles the multi-arch OCI index on **GHCR** (`ghcr.io/dgcosenza/unbound`) and mirrors the identical digest to **Docker Hub** (`dgcosenza/unbound`) with tags `latest`, `<version>`, `<version>-<YYYYMMDD>`, and `sha-<short>`; keyless-signs digests and attaches SPDX/CycloneDX SBOM attestations via **Cosign** OIDC; emits **SLSA Build L3** provenance; and publishes a signed **GitHub Release**.
 5. **Automated documentation sync:** Commits updated `versions.json`, the README `Current Versions` block, and a dated `CHANGELOG.md` entry via `github-actions[bot]` (`[skip ci]`), then syncs the Docker Hub overview and short description.
 6. **Failure alerting:** Opens or updates a single GitHub issue labeled `ci-failure` on any `main` or scheduled failure, and closes it automatically on the next green run.
