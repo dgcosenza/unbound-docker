@@ -12,9 +12,8 @@ the upstream NLnet Labs Unbound release version.
 - Verified components: Unbound `1.26.2`, ldns `1.9.2`, Base OS `Debian 13.8 (trixie-slim)`.
 - Architectures verified: `linux/amd64, linux/arm64` (native smoke tests + Dive efficiency gate).
 - Upstream status: refreshed base OS, dependencies, and supply-chain attestations.
-- Vulnerability gate: **0 fixable Critical/High** in Trivy and Grype (SBOM scan) (17 upstream-unfixed).
-- Published multi-arch digest (Docker Hub + GHCR): `dgcosenza/unbound@sha256:7c7b66308ad9c59a414577bfe2fdeda5e6fc6896a5c6d61870ecc1a06d67ef1b` (Cosign OIDC signed + SPDX/CycloneDX SBOM + SLSA L3 provenance).
-
+- Vulnerability gate: **0 fixable findings of any severity** in Trivy and Grype (SBOM scan) (17 upstream-unfixed).
+- Published multi-arch digest (Docker Hub + GHCR): `dgcosenza/unbound@sha256:77f4feaff1750d324bfae3db1db48fac5123b62f03a4780990b567b774756948` (Cosign OIDC signed + SPDX/CycloneDX SBOM + SLSA L3 provenance).
 ## [1.26.2] - 2026-11-25
 
 ### Automated Daily Build
