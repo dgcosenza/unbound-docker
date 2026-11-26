@@ -68,7 +68,7 @@ def build_readme_block(meta: dict, bullets: list[str]) -> str:
     fixable = meta.get("fixable_critical_high", 0)
     unfixed = meta.get("unfixed_cves") or []
     rows.append(
-        f"| Security gate (Trivy + Grype on SBOM) | **{fixable} fixable Critical/High** ({len(unfixed)} upstream-unfixed) |"
+        f"| Security gate (Trivy + Grype on SBOM) | **{fixable} fixable findings of any severity** ({len(unfixed)} upstream-unfixed) |"
     )
 
     lines = [
@@ -151,7 +151,7 @@ def update_changelog(
         entry_lines.append(f"- CVEs resolved since previous scan: {', '.join(f'`{c}`' for c in fixed_cves)}.")
     else:
         entry_lines.append(
-            f"- Vulnerability gate: **0 fixable Critical/High** in Trivy and Grype (SBOM scan) "
+            f"- Vulnerability gate: **0 fixable findings of any severity** in Trivy and Grype (SBOM scan) "
             f"({len(meta.get('unfixed_cves') or [])} upstream-unfixed)."
         )
     if digest:
