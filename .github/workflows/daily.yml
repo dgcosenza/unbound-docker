@@ -578,6 +578,28 @@ jobs:
           subject-digest: ${{ steps.index.outputs.index_digest }}
           push-to-registry: true
 
+      - name: Mirror identical signed digests to optional OCI registries (Quay.io, GitLab, Codeberg, ECR Public)
+        shell: bash
+        env:
+          VER: ${{ needs.resolve.outputs.upstream_version }}
+          DATE_TAG: ${{ steps.index.outputs.date_tag }}
+          INDEX_DIGEST: ${{ steps.index.outputs.index_digest }}
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+          QUAY_NAMESPACE: ${{ secrets.QUAY_NAMESPACE }}
+          GITLAB_USERNAME: ${{ secrets.GITLAB_USERNAME }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_NAMESPACE: ${{ secrets.GITLAB_NAMESPACE }}
+          CODEBERG_USERNAME: ${{ secrets.CODEBERG_USERNAME }}
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+          CODEBERG_NAMESPACE: ${{ secrets.CODEBERG_NAMESPACE }}
+          ECR_PUBLIC_ALIAS: ${{ secrets.ECR_PUBLIC_ALIAS }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          SHA_TAG="sha-${GITHUB_SHA::7}"
+          bash .github/scripts/mirror-registries.sh --spec "unbound|${INDEX_DIGEST}|latest,${VER},${DATE_TAG},${SHA_TAG}"
+
       - name: Prepare release assets, checksums, and Cosign blob signature
         shell: bash
         env:
@@ -789,7 +811,13 @@ jobs:
             TMPBRANCH="tmp/docs-${GITHUB_RUN_ID}"
             git branch "$TMPBRANCH"
             git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-            git push origin "$TMPBRANCH"
+            _pushed_tmp=false
+            for _attempt in 1 2 3; do
+              if git push origin "$TMPBRANCH"; then _pushed_tmp=true; break; fi
+              echo "tmp branch push attempt ${_attempt} failed; retrying..." >&2
+              sleep 5
+            done
+            [ "$_pushed_tmp" = "true" ] || { echo "ERROR: failed to push $TMPBRANCH after 3 attempts." >&2; exit 1; }
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
             echo "tmpbranch=${TMPBRANCH}" >> "$GITHUB_OUTPUT"
@@ -884,11 +912,17 @@ jobs:
             exit 1
           fi
 
+          _pushed_main=false
           for _attempt in 1 2 3; do
-            git push origin "${TMPBRANCH}:main" && break
+            if git push origin "${TMPBRANCH}:main"; then _pushed_main=true; break; fi
             echo "push attempt ${_attempt} failed; retrying..." >&2
             sleep 5
           done
+          if [ "$_pushed_main" != "true" ]; then
+            git push origin --delete "$TMPBRANCH" || true
+            echo "ERROR: failed to push docs commit to main after 3 attempts." >&2
+            exit 1
+          fi
           git push origin --delete "$TMPBRANCH" || true
 
       - name: Check Docker Hub sync credentials
