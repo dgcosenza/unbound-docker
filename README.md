@@ -58,9 +58,9 @@ A source-built, multi-arch, continuously rebuilt **Debian 13 (`trixie-slim`)** c
 | Base OS | `Debian 13.8 (trixie-slim)` |
 | Architectures | `linux/amd64, linux/arm64` |
 | Compressed size (per arch) | `amd64: 35.4 MB, arm64: 35.7 MB` |
-| Last verified build (UTC) | `2026-11-27` |
-| Published multi-arch digest | `dgcosenza/unbound@sha256:950ccc2d75794d8464393bf9a8cbbe53d7d0f131869dc574a00ee8efd79f3260` |
-| GHCR mirror | `ghcr.io/dgcosenza/unbound@sha256:950ccc2d75794d8464393bf9a8cbbe53d7d0f131869dc574a00ee8efd79f3260` |
+| Last verified build (UTC) | `2026-11-28` |
+| Published multi-arch digest | `dgcosenza/unbound@sha256:96303b1bd47aabd179cb9cf7f4a4a30ec96e338e8fd33c84d688180dc2c63d55` |
+| GHCR mirror | `ghcr.io/dgcosenza/unbound@sha256:96303b1bd47aabd179cb9cf7f4a4a30ec96e338e8fd33c84d688180dc2c63d55` |
 | Supply chain | Cosign OIDC signed + SPDX & CycloneDX SBOM attestations + SLSA Build L3 provenance |
 | Security gate (Trivy + Grype on SBOM) | **0 fixable findings of any severity** (17 upstream-unfixed) |
 
